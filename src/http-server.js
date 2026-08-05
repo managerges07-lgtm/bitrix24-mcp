@@ -34,6 +34,10 @@ export async function startHttpServer(config, registerTools) {
   const resourceMetadataUrl = new URL('/.well-known/oauth-protected-resource', baseUrl).href;
 
   const app = express();
+  // Single reverse proxy (host nginx) in front: trust its X-Forwarded-* headers so
+  // the SDK's rate limiter keys on the real client IP instead of lumping everyone
+  // together under 127.0.0.1.
+  app.set('trust proxy', 1);
   app.use(
     cors({
       origin: true,

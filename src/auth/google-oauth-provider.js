@@ -17,6 +17,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import axios from 'axios';
+import { InvalidGrantError, InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -28,6 +29,10 @@ const PENDING_TTL = 10 * 60; // in-flight flow to Google
 const CODE_TTL = 5 * 60; // authorization code (single-use)
 const ACCESS_TTL = 60 * 60; // access token
 const REFRESH_TTL = 30 * 24 * 60 * 60; // refresh token
+// After rotation the spent refresh token stays valid for this long and replays the
+// same result: Claude fires several refreshes in parallel, and strict single-use
+// would fail all but one of them and kill the session.
+const REFRESH_GRACE = 60;
 const SWEEP_INTERVAL_MS = 60 * 1000;
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -235,7 +240,7 @@ export class GoogleOAuthProvider {
   async challengeForAuthorizationCode(client, authorizationCode) {
     const data = this._codes.get(authorizationCode);
     if (!data || data.expiresAt <= now() || data.client.client_id !== client.client_id) {
-      throw new Error('invalid authorization code');
+      throw new InvalidGrantError('invalid authorization code');
     }
     return data.params.codeChallenge;
   }
@@ -244,41 +249,53 @@ export class GoogleOAuthProvider {
   async exchangeAuthorizationCode(client, authorizationCode /*, codeVerifier, redirectUri, resource */) {
     const data = this._codes.get(authorizationCode);
     if (!data || data.expiresAt <= now() || data.client.client_id !== client.client_id) {
-      throw new Error('invalid authorization code');
+      throw new InvalidGrantError('invalid authorization code');
     }
     this._codes.delete(authorizationCode); // single-use
     return this._issueTokens(client.client_id, data.params.scopes || [], data.email);
   }
 
   // /token step (refresh_token grant): renew the session without re-login. We
-  // rotate the refresh token (invalidate the old one) as a best practice.
+  // rotate the refresh token (invalidate the old one) as a best practice, but keep
+  // it replayable for REFRESH_GRACE seconds — see the constant.
   async exchangeRefreshToken(client, refreshToken /*, scopes, resource */) {
     const data = this._refresh.get(refreshToken);
     if (!data || data.expiresAt <= now() || data.clientId !== client.client_id) {
-      throw new Error('invalid refresh token');
+      throw new InvalidGrantError('invalid refresh token');
     }
     // If the email dropped off the allowlist, cut the session here.
     if (!this.allowed.has(data.email)) {
       this._refresh.delete(refreshToken);
-      throw new Error('account no longer authorized');
+      throw new InvalidGrantError('account no longer authorized');
     }
-    this._refresh.delete(refreshToken); // rotation
-    return this._issueTokens(client.client_id, data.scopes, data.email);
+    // Already rotated moments ago (parallel refresh): replay the same tokens.
+    if (data.rotatedTo) return data.rotatedTo;
+
+    const tokens = this._issueTokens(client.client_id, data.scopes, data.email);
+    // Rotation with a grace window: shorten the old token's life instead of
+    // deleting it, so the sweep drops it once the window closes.
+    data.rotatedTo = tokens;
+    data.expiresAt = now() + REFRESH_GRACE;
+    this._persist();
+    return tokens;
   }
 
-  // Invoked by requireBearerAuth on every MCP request. Returns AuthInfo or throws (→401).
+  // Invoked by requireBearerAuth on every MCP request. Returns AuthInfo or throws.
+  // The error MUST be an InvalidTokenError: the SDK maps only that one to 401 +
+  // WWW-Authenticate (any other error becomes a 500, and the client then treats a
+  // simply expired token as a server outage and never refreshes).
   async verifyAccessToken(token) {
     const data = this._tokens.get(token);
-    if (!data) throw new Error('invalid token');
+    if (!data) throw new InvalidTokenError('invalid token');
     if (data.expiresAt <= now()) {
       this._tokens.delete(token);
-      throw new Error('token expired');
+      throw new InvalidTokenError('token expired');
     }
     // Defense in depth: if the email was removed from the allowlist, the token
     // stops working immediately (no need to wait for it to expire).
     if (!this.allowed.has(data.email)) {
       this._tokens.delete(token);
-      throw new Error('account no longer authorized');
+      throw new InvalidTokenError('account no longer authorized');
     }
     return {
       token,
