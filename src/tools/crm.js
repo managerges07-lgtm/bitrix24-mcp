@@ -79,7 +79,8 @@ export const crmCreateSchema = z.object({
 export async function crmCreate({ entity, entity_type_id, fields, params = {}, webhook_url }) {
   const client = new Bitrix24Client(resolveWebhook(webhook_url));
   const { base, extra } = resolveMethod(entity, entity_type_id);
-  const res = await client.call(`${base}.add`, { fields: { ...fields, ...extra }, params });
+  // entityTypeId — параметр верхнего уровня crm.item.add; внутри fields метод его не видит
+  const res = await client.call(`${base}.add`, { fields, params, ...extra });
   const id = res.result?.item?.id ?? res.result;
   return { entity: entity || `SPA_${entity_type_id}`, portal: client.portal, created_id: id };
 }
