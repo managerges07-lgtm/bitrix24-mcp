@@ -80,6 +80,21 @@ import {
   mailMessageThreadSchema, mailMessageThread,
 } from './src/tools/mail.js';
 
+// ── База знаний ───────────────────────────────────────────────────────────────
+import {
+  kbListSchema, kbList,
+  kbPagesSchema, kbPages,
+  kbPageGetSchema, kbPageGet,
+  kbPageCreateSchema, kbPageCreate,
+  kbPagePublishSchema, kbPagePublish,
+  kbBlockAddSchema, kbBlockAdd,
+  kbBlockUpdateSchema, kbBlockUpdate,
+  kbBlockDeleteSchema, kbBlockDelete,
+  kbCardAddSchema, kbCardAdd,
+  kbCardRemoveSchema, kbCardRemove,
+  kbImageUploadSchema, kbImageUpload,
+} from './src/tools/knowledge-base.js';
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 function wrap(fn) {
@@ -308,6 +323,65 @@ server.tool('b24_mail_message_get',
 server.tool('b24_mail_message_thread',
   'Возвращает цепочку писем по ID любого сообщения переписки. Максимум 50.',
   mailMessageThreadSchema.shape, wrap(mailMessageThread));
+
+// ── База знаний (модуль landing, требуется scope `landing`) ───────────────────
+server.tool('b24_kb_list',
+  'Выводит список баз знаний портала с ID, названием, адресом и признаком публикации. ' +
+  'ID нужен для b24_kb_pages.',
+  kbListSchema.shape, wrap(kbList));
+
+server.tool('b24_kb_pages',
+  'Выводит статьи (страницы) базы знаний с публичными ссылками. ' +
+  'Страницы с is_area = true — служебные включаемые области (сайдбар, шаблоны), а не статьи.',
+  kbPagesSchema.shape, wrap(kbPages));
+
+server.tool('b24_kb_page_get',
+  'Читает содержимое статьи по блокам. detail="text" — текст статьи; ' +
+  'detail="nodes" — карта редактируемых нод и карточек с текущими значениями и готовыми ' +
+  'селекторами для b24_kb_block_update; detail="html" — плюс сырой HTML. ' +
+  'По умолчанию читает черновик: именно его ID блоков годятся для правки.',
+  kbPageGetSchema.shape, wrap(kbPageGet));
+
+server.tool('b24_kb_page_create',
+  'Создаёт статью в базе знаний. Страница создаётся пустой и неопубликованной: ' +
+  'наполните её через b24_kb_block_add и опубликуйте через b24_kb_page_publish.',
+  kbPageCreateSchema.shape, wrap(kbPageCreate));
+
+server.tool('b24_kb_page_publish',
+  'Публикует статью базы знаний: переносит черновик в публичную версию и делает страницу видимой. ' +
+  'Нужен после любых правок блоков.',
+  kbPagePublishSchema.shape, wrap(kbPagePublish));
+
+server.tool('b24_kb_block_add',
+  'Добавляет блок вёрстки в статью базы знаний: заголовок, текст, FAQ, колонки. ' +
+  'Блок попадает в черновик, порядок задаётся через after_block_id.',
+  kbBlockAddSchema.shape, wrap(kbBlockAdd));
+
+server.tool('b24_kb_block_update',
+  'Меняет содержимое блока статьи: тексты, картинки и ссылки задаются селекторами нод. ' +
+  'Значения для карточек передавайте по одному с индексом (".selector@0", ".selector@1") — ' +
+  'массив значений Bitrix24 молча игнорирует. Правка идёт в черновик.',
+  kbBlockUpdateSchema.shape, wrap(kbBlockUpdate));
+
+server.tool('b24_kb_block_delete',
+  'Удаляет блок из статьи базы знаний. Нужен, в частности, чтобы вычистить демо-контент шаблона ' +
+  'после копирования страницы.',
+  kbBlockDeleteSchema.shape, wrap(kbBlockDelete));
+
+server.tool('b24_kb_card_add',
+  'Добавляет карточку в блок статьи (пункт FAQ, колонку, элемент списка). ' +
+  'Без параметра content клонирует карточку, указанную селектором.',
+  kbCardAddSchema.shape, wrap(kbCardAdd));
+
+server.tool('b24_kb_card_remove',
+  'Удаляет карточку из блока статьи по селектору с индексом. Так убираются лишние ' +
+  'пункты и колонки, оставшиеся от шаблона блока.',
+  kbCardRemoveSchema.shape, wrap(kbCardRemove));
+
+server.tool('b24_kb_image_upload',
+  'Загружает картинку и привязывает её к блоку статьи. Возвращает src, который затем ' +
+  'прописывается в ноду картинки через b24_kb_block_update.',
+  kbImageUploadSchema.shape, wrap(kbImageUpload));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -326,7 +400,7 @@ async function runStdio() {
       const client = new Bitrix24Client(process.env.B24_DEFAULT_WEBHOOK);
       const res = await client.call('profile');
       const name = `${res.result?.NAME || ''} ${res.result?.LAST_NAME || ''}`.trim();
-      process.stderr.write(`[bitrix24] ✓ Подключено к ${client.portal} как ${name} | активных инструментов: ${Object.keys(server._registeredTools ?? {}).length || 44}\n`);
+      process.stderr.write(`[bitrix24] ✓ Подключено к ${client.portal} как ${name} | активных инструментов: ${Object.keys(server._registeredTools ?? {}).length || 59}\n`);
     } catch (err) {
       process.stderr.write(`[bitrix24] ✗ Не удалось подключиться: ${err.message}\n`);
     }
