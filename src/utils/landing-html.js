@@ -37,8 +37,11 @@ export function decodeEntities(text) {
 }
 
 // Убирает то, что мешает разбору тегов: комментарии и содержимое script/style.
+// Заодно приводит переводы строк к \n — вёрстка блоков приходит с CRLF, а из-за
+// уцелевших \r схлопывание пустых строк в htmlToText не срабатывало.
 function stripNoise(html) {
   return String(html ?? '')
+    .replace(/\r\n?/g, '\n')
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
 }
