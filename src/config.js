@@ -31,6 +31,10 @@ export function loadConfig() {
     googleClientSecret: (process.env.B24_GOOGLE_CLIENT_SECRET || '').trim(),
     allowedEmails: parseEmails(process.env.B24_ALLOWED_EMAILS),
     defaultWebhook: (process.env.B24_DEFAULT_WEBHOOK || '').trim(),
+    // Optional separate webhook for Knowledge Base 2.0 (note.* methods): it needs
+    // the `note` scope, which the shared webhook usually lacks. Empty → the
+    // b24_kb2_* tools fall back to the default webhook.
+    noteWebhook: (process.env.B24_NOTE_WEBHOOK || '').trim(),
     // Optional path where the OAuth provider persists clients/tokens so they
     // survive a restart. Empty → in-memory only (tokens lost on restart).
     oauthStorePath: (process.env.B24_OAUTH_STORE_PATH || '').trim(),

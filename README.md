@@ -24,6 +24,7 @@ Built and maintained by **[Bit2Beat](https://bit2beat.com)** — Bitrix24 specia
 | **Telephony** | Query the call history log. |
 | **Mail** | List mailboxes, list and read email messages, and follow email threads (REST v3 — requires the `mail` scope). |
 | **Knowledge Base** | Browse knowledge bases and their articles, read article content, create and publish articles, and edit their blocks, cards, and images (requires the `landing` scope). |
+| **Knowledge Base 2.0** | Create knowledge bases, browse their document tree, read and write articles as Markdown, search across documents, and attach files (REST v3 — requires the `note` scope). |
 | **Product Catalog** | List, get, create, and update products and sections. |
 | **Configuration** | Export the full portal config (pipelines, stages, custom fields, automations) to JSON, compare two configs, and apply one config to another portal. |
 | **Raw API** | Call any Bitrix24 REST method directly, including batch requests. |
@@ -103,6 +104,11 @@ Add the following entry inside `"mcpServers"`:
 ```
 
 > **Windows note:** use forward slashes (`/`) or escaped backslashes (`\\`) in the path.
+
+> **Knowledge Base 2.0:** the `b24_kb2_*` tools need the `note` scope. If it lives on a
+> different webhook than the one above — which is common, since `note` can only be granted
+> by hand in the Bitrix24 UI — add `B24_NOTE_WEBHOOK` next to `B24_DEFAULT_WEBHOOK`. That
+> webhook also decides authorship: documents are created by the user it belongs to.
 
 ### 5. Restart Claude Desktop
 
@@ -205,6 +211,7 @@ Use this when you want Claude to operate as a full Bitrix24 assistant — readin
 | `catalog` | Product catalog |
 | `telephony` | Call history |
 | `mail` | Read mailboxes and email messages (REST v3) |
+| `note` | Knowledge Base 2.0: bases, documents, files (REST v3) |
 
 > Claude will gracefully report when a requested action requires a scope that is not enabled on the webhook, so you can always start with fewer scopes and add more later.
 
@@ -213,7 +220,7 @@ Use this when you want Claude to operate as a full Bitrix24 assistant — readin
 ## Available Tools
 
 <details>
-<summary>Click to expand full tool list (59 tools)</summary>
+<summary>Click to expand full tool list (69 tools)</summary>
 
 ### Connection
 - `b24_test_connection` — Verify the webhook and confirm portal info and user permissions.
@@ -282,6 +289,23 @@ Use this when you want Claude to operate as a full Bitrix24 assistant — readin
 - `b24_kb_card_remove` — Remove a card from a block by indexed selector.
 - `b24_kb_image_upload` — Upload an image and bind it to a block, returning its `src`.
 
+### Knowledge Base 2.0
+
+A separate engine from the `b24_kb_*` tools above: a base holds a tree of documents whose
+content is plain Markdown, and there is no publishing step. Needs the `note` scope, which is
+usually granted to a personal webhook — see `B24_NOTE_WEBHOOK` in `.env.example`.
+
+- `b24_kb2_list` — List the portal's Knowledge Base 2.0 bases.
+- `b24_kb2_create` — Create a base.
+- `b24_kb2_delete` — Delete a base and all of its documents (requires `confirm: true`).
+- `b24_kb2_tree` — List a base's document tree with article links.
+- `b24_kb2_page_get` — Read a document: title plus its full Markdown.
+- `b24_kb2_page_create` — Create a document, optionally nested under a parent.
+- `b24_kb2_page_update` — Replace a document's title and/or Markdown.
+- `b24_kb2_page_delete` — Delete a document (cascades to nested ones).
+- `b24_kb2_search` — Search documents by title and body across all bases.
+- `b24_kb2_file_add` — Attach an image or file and get the `[[image fileId=…]]` block to embed.
+
 ### Product Catalog
 - `b24_products_list` — List catalog products.
 - `b24_products_get` — Get product detail.
@@ -330,7 +354,7 @@ Once configured, you can ask Claude things like:
 Claude (Claude Desktop / Claude Code)
         │  MCP protocol (stdio)
         ▼
-   index.js  (MCP server — 59 tools)
+   index.js  (MCP server — 69 tools)
         │
    src/tools/      ← one file per functional area
    src/bitrix24/   ← HTTP client with rate limiting & retry

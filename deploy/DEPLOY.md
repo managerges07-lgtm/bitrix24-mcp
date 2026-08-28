@@ -26,6 +26,11 @@ Create `/opt/bitrix24-mcp/.env`:
 # Bitrix24 incoming webhook (credential SHARED by all authorized users).
 B24_DEFAULT_WEBHOOK=https://your-portal.bitrix24.com/rest/1/your-token/
 
+# Knowledge Base 2.0 (b24_kb2_* tools) — needs the `note` scope, which usually lives on a
+# personal webhook. Also decides who authors the documents. Optional; without it those
+# tools fall back to the webhook above and will answer 403 if it has no `note` scope.
+B24_NOTE_WEBHOOK=https://your-portal.bitrix24.com/rest/359/your-token/
+
 B24_TRANSPORT=http
 B24_HOST=0.0.0.0
 B24_PORT=8001

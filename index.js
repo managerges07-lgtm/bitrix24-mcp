@@ -95,6 +95,20 @@ import {
   kbImageUploadSchema, kbImageUpload,
 } from './src/tools/knowledge-base.js';
 
+// ── База знаний 2.0 ───────────────────────────────────────────────────────────
+import {
+  kb2ListSchema, kb2List,
+  kb2CreateSchema, kb2Create,
+  kb2DeleteSchema, kb2Delete,
+  kb2TreeSchema, kb2Tree,
+  kb2PageGetSchema, kb2PageGet,
+  kb2PageCreateSchema, kb2PageCreate,
+  kb2PageUpdateSchema, kb2PageUpdate,
+  kb2PageDeleteSchema, kb2PageDelete,
+  kb2SearchSchema, kb2Search,
+  kb2FileAddSchema, kb2FileAdd,
+} from './src/tools/knowledge-base-2.js';
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 function wrap(fn) {
@@ -382,6 +396,61 @@ server.tool('b24_kb_image_upload',
   'Загружает картинку и привязывает её к блоку статьи. Возвращает src, который затем ' +
   'прописывается в ноду картинки через b24_kb_block_update.',
   kbImageUploadSchema.shape, wrap(kbImageUpload));
+
+// ── База знаний 2.0 (REST v3, модуль note, требуется scope `note`) ────────────
+// Отдельный от landing движок: база + дерево документов, содержимое — Markdown,
+// публикации нет. Работает через свой вебхук B24_NOTE_WEBHOOK.
+server.tool('b24_kb2_list',
+  'Выводит список баз знаний 2.0 портала (движок note). Это НЕ то же самое, что b24_kb_list: ' +
+  'старые базы на движке landing здесь не видны, и наоборот. ID нужен для b24_kb2_tree.',
+  kb2ListSchema.shape, wrap(kb2List));
+
+server.tool('b24_kb2_create',
+  'Создаёт базу знаний 2.0. В отличие от старого движка, базу можно завести прямо из API. ' +
+  'Доступ сотрудникам к ней выдаётся только в интерфейсе портала.',
+  kb2CreateSchema.shape, wrap(kb2Create));
+
+server.tool('b24_kb2_delete',
+  'Удаляет базу знаний 2.0 в корзину ВМЕСТЕ СО ВСЕМИ её документами. Требует confirm: true.',
+  kb2DeleteSchema.shape, wrap(kb2Delete));
+
+server.tool('b24_kb2_tree',
+  'Выводит дерево документов базы знаний 2.0: заголовки, вложенность через children и ссылки ' +
+  'на статьи. Содержимого документов не отдаёт — за ним b24_kb2_page_get.',
+  kb2TreeSchema.shape, wrap(kb2Tree));
+
+server.tool('b24_kb2_page_get',
+  'Читает документ базы знаний 2.0 целиком: заголовок и содержимое в Markdown одним полем. ' +
+  'Обязателен перед правкой: b24_kb2_page_update заменяет текст целиком.',
+  kb2PageGetSchema.shape, wrap(kb2PageGet));
+
+server.tool('b24_kb2_page_create',
+  'Создаёт документ в базе знаний 2.0 с содержимым в Markdown. Публиковать не нужно: документ ' +
+  'доступен по ссылке сразу. Через parent_id статья вкладывается в раздел дерева.',
+  kb2PageCreateSchema.shape, wrap(kb2PageCreate));
+
+server.tool('b24_kb2_page_update',
+  'Меняет заголовок и/или содержимое документа базы знаний 2.0. Markdown заменяется ЦЕЛИКОМ — ' +
+  'сначала прочитайте текущий текст через b24_kb2_page_get. При конфликте с открытым ' +
+  'редактором повторите с overwrite: true.',
+  kb2PageUpdateSchema.shape, wrap(kb2PageUpdate));
+
+server.tool('b24_kb2_page_delete',
+  'Удаляет документ базы знаний 2.0 в корзину. Удаление каскадное: вложенные документы ' +
+  'уезжают вместе с родителем.',
+  kb2PageDeleteSchema.shape, wrap(kb2PageDelete));
+
+server.tool('b24_kb2_search',
+  'Ищет документы во всех базах знаний 2.0 по заголовку и тексту. Возвращает фрагменты ' +
+  'совпадений и ссылки на статьи.',
+  kb2SearchSchema.shape, wrap(kb2Search));
+
+server.tool('b24_kb2_file_add',
+  'Загружает картинку или файл в документ базы знаний 2.0 и возвращает готовый блок вида ' +
+  '[[image fileId=...]]. В текст он сам не попадает: вставьте блок в Markdown и сохраните ' +
+  'через b24_kb2_page_update. Удалить загруженный файл через API нельзя — не перезаливайте ' +
+  'одну и ту же картинку при каждой правке.',
+  kb2FileAddSchema.shape, wrap(kb2FileAdd));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -400,7 +469,7 @@ async function runStdio() {
       const client = new Bitrix24Client(process.env.B24_DEFAULT_WEBHOOK);
       const res = await client.call('profile');
       const name = `${res.result?.NAME || ''} ${res.result?.LAST_NAME || ''}`.trim();
-      process.stderr.write(`[bitrix24] ✓ Подключено к ${client.portal} как ${name} | активных инструментов: ${Object.keys(server._registeredTools ?? {}).length || 59}\n`);
+      process.stderr.write(`[bitrix24] ✓ Подключено к ${client.portal} как ${name} | активных инструментов: ${Object.keys(server._registeredTools ?? {}).length || 69}\n`);
     } catch (err) {
       process.stderr.write(`[bitrix24] ✗ Не удалось подключиться: ${err.message}\n`);
     }
