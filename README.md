@@ -14,6 +14,8 @@ Built and maintained by **[Bit2Beat](https://bit2beat.com)** — Bitrix24 specia
 |---|---|
 | **CRM** | List, get, create, update, and delete deals, contacts, companies, leads, and Smart Process items. Add timeline comments. |
 | **Tasks** | List, get, create, update, and complete tasks. |
+| **Task Templates** | Create, list, and update native Bitrix24 task templates, and spawn tasks from them with checklists, tags, CRM bindings, and user fields. |
+| **Task User Fields** | List, create, update, and delete custom fields on tasks. |
 | **Users & Departments** | List active users and the organizational structure. |
 | **Disk** | Browse storages and folders, get file info and download links, upload files. |
 | **Calendar** | List and create calendar events. |
@@ -220,7 +222,7 @@ Use this when you want Claude to operate as a full Bitrix24 assistant — readin
 ## Available Tools
 
 <details>
-<summary>Click to expand full tool list (69 tools)</summary>
+<summary>Click to expand full tool list (77 tools)</summary>
 
 ### Connection
 - `b24_test_connection` — Verify the webhook and confirm portal info and user permissions.
@@ -240,6 +242,30 @@ Use this when you want Claude to operate as a full Bitrix24 assistant — readin
 - `b24_tasks_create` — Create a new task.
 - `b24_tasks_update` — Update an existing task.
 - `b24_tasks_complete` — Mark a task as complete.
+
+### Task Templates
+- `b24_task_template_create` — Create a native Bitrix24 task template (title, description, assignee, creator, co-workers, observers, priority, deadline offset, checklist, tags, CRM bindings, user fields, recurrence). Refuses to create a same-named duplicate and re-reads the result.
+- `b24_task_template_list` — List templates with filters by title, assignee, creator, project, and recurrence.
+- `b24_task_template_update` — Update a template; tags and the checklist are replaced wholesale.
+- `b24_task_create_from_template` — Spawn a task from a template, turning deadline offsets into dates and copying the checklist, tags, CRM bindings, and user fields. Any field can be overridden.
+
+> **Portal quirks these tools work around.** `tasks.template.list` is broken in the Bitrix24 cloud
+> (it answers `Unknown field definition "filter"` for every argument set), so the list is assembled by
+> scanning IDs through `batch` — raise `max_id` if the portal holds many templates. A template's `TAGS`
+> and `XML_ID` fields are silently dropped by REST, so tags are kept as a `[MCP_TAGS]: …` marker line at
+> the end of the description and turned into real tags on the task. Task templates also have **their own**
+> user-field entity (`TASKS_TASK_TEMPLATE`), separate from tasks — see below.
+
+### Task User Fields
+- `b24_task_userfield_list` — List custom fields on tasks; optionally the type catalogue and the separate template field set.
+- `b24_task_userfield_create` — Create a custom field on tasks (the `UF_` prefix is added automatically).
+- `b24_task_userfield_update` — Change label, sort order, mandatory flag, settings, or list values.
+- `b24_task_userfield_delete` — Delete a field. Requires `confirm: true` — its values are erased in **all** tasks.
+
+> **Tasks and task templates do not share user fields.** A field created here belongs to `TASKS_TASK`;
+> templates use `TASKS_TASK_TEMPLATE`, and Bitrix24 exposes no REST method to create a field there — it
+> has to be done in the portal UI. Passing a code to the wrong entity is rejected with an explicit error
+> instead of being silently discarded.
 
 ### Users & Departments
 - `b24_users_list` — List active users.
@@ -354,7 +380,7 @@ Once configured, you can ask Claude things like:
 Claude (Claude Desktop / Claude Code)
         │  MCP protocol (stdio)
         ▼
-   index.js  (MCP server — 69 tools)
+   index.js  (MCP server — 77 tools)
         │
    src/tools/      ← one file per functional area
    src/bitrix24/   ← HTTP client with rate limiting & retry
@@ -380,6 +406,24 @@ This server includes tools designed for Bitrix24 consultants and partners who ne
 3. **Apply** it to the target with `b24_apply_config`
 
 This workflow covers pipelines, stages, custom fields, currencies, SPA types, automations, and the product catalog.
+
+---
+
+## Tests
+
+```bash
+npm test        # unit tests + a real tools/list handshake over stdio — no network
+npm run test:live   # additionally runs end-to-end against the portal
+```
+
+`npm test` checks the pure helpers (PHP-serialized field parsing, tag markers, CRM code building,
+template normalization) and then boots the server over stdio and asserts that `tools/list` exposes the
+expected tools and that none of the existing ones disappeared.
+
+`npm run test:live` needs `B24_DEFAULT_WEBHOOK`. It creates a temporary task user field, a template and
+tasks named `[MCP TEST] …` on the portal, verifies tags, CRM bindings, user fields, checklists,
+duplicate protection and input validation, then **deletes everything it created**. Override the actors
+with `B24_TEST_USER_ID` and `B24_TEST_DEAL_ID`.
 
 ---
 

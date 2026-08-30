@@ -37,6 +37,22 @@ import {
   tasksCompleteSchema, tasksComplete,
 } from './src/tools/tasks.js';
 
+// ── Шаблоны задач ─────────────────────────────────────────────────────────────
+import {
+  taskTemplateCreateSchema, taskTemplateCreate,
+  taskTemplateListSchema, taskTemplateList,
+  taskTemplateUpdateSchema, taskTemplateUpdate,
+  taskCreateFromTemplateSchema, taskCreateFromTemplate,
+} from './src/tools/task-templates.js';
+
+// ── Пользовательские поля задач ───────────────────────────────────────────────
+import {
+  taskUserfieldListSchema, taskUserfieldList,
+  taskUserfieldCreateSchema, taskUserfieldCreate,
+  taskUserfieldUpdateSchema, taskUserfieldUpdate,
+  taskUserfieldDeleteSchema, taskUserfieldDelete,
+} from './src/tools/task-userfields.js';
+
 // ── Пользователи и отделы ──────────────────────────────────────────────────────
 import { usersListSchema, usersList } from './src/tools/users-departments.js';
 import { departmentsListSchema, departmentsList } from './src/tools/users-departments.js';
@@ -230,6 +246,52 @@ server.tool('b24_tasks_update',
 server.tool('b24_tasks_complete',
   'Отмечает задачу как завершённую.',
   tasksCompleteSchema.shape, wrap(tasksComplete));
+
+// ── Шаблоны задач (нативные tasks.template.*) ─────────────────────────────────
+server.tool('b24_task_template_create',
+  'Создаёт НАСТОЯЩИЙ шаблон задачи Bitrix24 (виден в интерфейсе: Задачи → Шаблоны). ' +
+  'Поддерживает название, описание, исполнителя, постановщика, соисполнителей, наблюдателей, ' +
+  'приоритет, смещение срока, чек-лист, теги, пользовательские поля, CRM-привязки и автоповтор. ' +
+  'По умолчанию не создаёт дубль одноимённого шаблона и перечитывает результат с портала.',
+  taskTemplateCreateSchema.shape, wrap(taskTemplateCreate));
+
+server.tool('b24_task_template_list',
+  'Выводит шаблоны задач портала с фильтрами по названию, исполнителю, постановщику, проекту и автоповтору. ' +
+  'Нативный tasks.template.list в облаке сломан, поэтому список собирается перебором ID через batch — ' +
+  'при большом числе шаблонов поднимите max_id.',
+  taskTemplateListSchema.shape, wrap(taskTemplateList));
+
+server.tool('b24_task_template_update',
+  'Меняет существующий шаблон задачи: любые поля частично, теги и чек-лист — целиком. ' +
+  'Перечитывает шаблон после записи и предупреждает, если портал молча проигнорировал значение.',
+  taskTemplateUpdateSchema.shape, wrap(taskTemplateUpdate));
+
+server.tool('b24_task_create_from_template',
+  'Создаёт задачу по шаблону: переносит поля, переводит смещения срока в конкретные даты, ' +
+  'проставляет теги, CRM-привязки, пользовательские поля и чек-лист, затем перечитывает задачу. ' +
+  'Любое поле можно переопределить. Защищает от повторного создания той же задачи.',
+  taskCreateFromTemplateSchema.shape, wrap(taskCreateFromTemplate));
+
+// ── Пользовательские поля задач ───────────────────────────────────────────────
+server.tool('b24_task_userfield_list',
+  'Выводит пользовательские поля задач (сущность TASKS_TASK) с типом, обязательностью и настройками. ' +
+  'Опционально — справочник типов полей и отдельный набор полей ШАБЛОНОВ задач (это разные наборы).',
+  taskUserfieldListSchema.shape, wrap(taskUserfieldList));
+
+server.tool('b24_task_userfield_create',
+  'Создаёт пользовательское поле ЗАДАЧ: код (префикс UF_ подставляется сам), тип, подпись, ' +
+  'обязательность, множественность и значения списка. У шаблонов задач набор полей свой, ' +
+  'и создать поле там через REST нельзя — только в интерфейсе портала.',
+  taskUserfieldCreateSchema.shape, wrap(taskUserfieldCreate));
+
+server.tool('b24_task_userfield_update',
+  'Меняет подпись, обязательность, сортировку, настройки или значения списка у пользовательского поля задач. ' +
+  'Код и тип поля Bitrix24 менять не позволяет.',
+  taskUserfieldUpdateSchema.shape, wrap(taskUserfieldUpdate));
+
+server.tool('b24_task_userfield_delete',
+  'Удаляет пользовательское поле задач. Требует confirm: true — вместе с полем стираются его значения во ВСЕХ задачах.',
+  taskUserfieldDeleteSchema.shape, wrap(taskUserfieldDelete));
 
 // ── Пользователи и отделы ──────────────────────────────────────────────────────
 server.tool('b24_users_list',
@@ -469,7 +531,7 @@ async function runStdio() {
       const client = new Bitrix24Client(process.env.B24_DEFAULT_WEBHOOK);
       const res = await client.call('profile');
       const name = `${res.result?.NAME || ''} ${res.result?.LAST_NAME || ''}`.trim();
-      process.stderr.write(`[bitrix24] ✓ Подключено к ${client.portal} как ${name} | активных инструментов: ${Object.keys(server._registeredTools ?? {}).length || 69}\n`);
+      process.stderr.write(`[bitrix24] ✓ Подключено к ${client.portal} как ${name} | активных инструментов: ${Object.keys(server._registeredTools ?? {}).length || 77}\n`);
     } catch (err) {
       process.stderr.write(`[bitrix24] ✗ Не удалось подключиться: ${err.message}\n`);
     }

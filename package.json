@@ -5,7 +5,9 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node tests/run-tests.mjs",
+    "test:live": "node tests/run-tests.mjs --live"
   },
   "keywords": [
     "mcp",
