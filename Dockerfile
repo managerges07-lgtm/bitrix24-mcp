@@ -1,10 +1,10 @@
-FROM node:20-slim
+FROM node:24.20.0-slim
 
 WORKDIR /app
 
 # Dependencies first (better cache). No devDependencies in production.
 COPY package.json package-lock.json* ./
-RUN npm install --omit=dev --no-audit --no-fund
+RUN npm ci --omit=dev --no-audit --no-fund
 
 # Application code.
 COPY index.js ./
@@ -13,7 +13,7 @@ COPY src ./src
 # The process runs as a non-privileged user. /data holds the OAuth store and is
 # owned by appuser so a named volume mounted there inherits writable ownership.
 RUN useradd --create-home --uid 10001 appuser \
- && mkdir -p /data && chown appuser:appuser /data
+ && mkdir -p /data/workspace && chown -R appuser:appuser /data
 USER appuser
 
 # Inside the container we listen on all interfaces; it is NOT published outward:
@@ -22,7 +22,8 @@ USER appuser
 ENV B24_TRANSPORT=http \
     B24_HOST=0.0.0.0 \
     B24_PORT=8001 \
-    B24_OAUTH_STORE_PATH=/data/oauth-state.json
+    B24_OAUTH_STORE_PATH=/data/oauth-state.json \
+    B24_WORKSPACE_DIR=/data/workspace
 
 EXPOSE 8001
 

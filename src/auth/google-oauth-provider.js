@@ -17,11 +17,13 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import axios from 'axios';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { InvalidGrantError, InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const GOOGLE_ISSUERS = new Set(['https://accounts.google.com', 'accounts.google.com']);
+const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
+const GOOGLE_JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
 
 // TTLs (seconds). Short access + long refresh: if an access token is stolen, its
 // usable window is small; the session stays alive via the (rotated) refresh token.
@@ -36,17 +38,6 @@ const REFRESH_GRACE = 60;
 const SWEEP_INTERVAL_MS = 60 * 1000;
 
 const now = () => Math.floor(Date.now() / 1000);
-
-// Decode a JWT payload (Google id_token) WITHOUT verifying the signature. This is
-// safe in this flow: the id_token arrives over the server↔Google back-channel
-// (TLS) as a direct response to OUR code exchange (OIDC code flow, §3.1.3.7), not
-// from the client. We still validate the claims (iss/aud/exp) below.
-function decodeJwtPayload(jwt) {
-  const part = jwt.split('.')[1];
-  if (!part) throw new Error('malformed id_token');
-  const json = Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
-  return JSON.parse(json);
-}
 
 class InMemoryClientsStore {
   constructor(onChange) {
@@ -146,11 +137,14 @@ export class GoogleOAuthProvider {
   }
 
   // Validate the claims of Google's id_token and return the verified email.
-  _emailFromIdToken(idToken) {
-    const claims = decodeJwtPayload(idToken);
-    if (!GOOGLE_ISSUERS.has(claims.iss)) throw new Error('id_token: unexpected issuer');
-    if (claims.aud !== this.cfg.googleClientId) throw new Error('id_token: aud mismatch');
-    if (typeof claims.exp !== 'number' || claims.exp <= now()) throw new Error('id_token expired');
+  async _emailFromIdToken(idToken, expectedNonce) {
+    const { payload: claims } = await jwtVerify(idToken, GOOGLE_JWKS, {
+      issuer: GOOGLE_ISSUERS,
+      audience: this.cfg.googleClientId,
+      requiredClaims: ['sub', 'email', 'exp', 'iat', 'iss', 'aud', 'nonce'],
+      clockTolerance: 5,
+    });
+    if (claims.nonce !== expectedNonce) throw new Error('id_token: nonce mismatch');
     // email_verified may come as a boolean or the string "true".
     if (claims.email_verified !== true && claims.email_verified !== 'true') {
       throw new Error('id_token: email not verified');
@@ -178,7 +172,8 @@ export class GoogleOAuthProvider {
   // `params` is already parsed by the SDK: { redirectUri, codeChallenge, scopes?, state?, resource? }.
   async authorize(client, params, res) {
     const googleState = randomUUID();
-    this._pending.set(googleState, { client, params, expiresAt: now() + PENDING_TTL });
+    const nonce = randomUUID();
+    this._pending.set(googleState, { client, params, nonce, expiresAt: now() + PENDING_TTL });
 
     const url = new URL(GOOGLE_AUTH_URL);
     url.searchParams.set('client_id', this.cfg.googleClientId);
@@ -186,6 +181,7 @@ export class GoogleOAuthProvider {
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', 'openid email');
     url.searchParams.set('state', googleState);
+    url.searchParams.set('nonce', nonce);
     url.searchParams.set('access_type', 'online');
     url.searchParams.set('prompt', 'select_account');
     res.redirect(url.toString());
@@ -217,7 +213,7 @@ export class GoogleOAuthProvider {
     const idToken = resp.data?.id_token;
     if (!idToken) throw new Error('Google did not return an id_token');
 
-    const email = this._emailFromIdToken(idToken);
+    const email = await this._emailFromIdToken(idToken, pending.nonce);
 
     // Allowlist: the only barrier of who may use the shared webhook.
     if (!email || !this.allowed.has(email)) {

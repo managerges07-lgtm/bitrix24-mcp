@@ -35,7 +35,7 @@ Built and maintained by **[Bit2Beat](https://bit2beat.com)** — Bitrix24 specia
 
 ## Requirements
 
-- [Node.js](https://nodejs.org) **18 or higher**
+- [Node.js](https://nodejs.org) **24.20.0 LTS**
 - [Claude Desktop](https://claude.ai/download) or [Claude Code](https://claude.ai/code)
 - A Bitrix24 incoming webhook URL
 
@@ -46,14 +46,14 @@ Built and maintained by **[Bit2Beat](https://bit2beat.com)** — Bitrix24 specia
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/bit2beat/bitrix24-mcp.git
+git clone https://github.com/managerges07-lgtm/bitrix24-mcp.git
 cd bitrix24-mcp
 ```
 
 ### 2. Install dependencies
 
 ```bash
-npm install
+npm ci
 ```
 
 ### 3. Create your Bitrix24 webhook
@@ -131,6 +131,11 @@ are admitted. All admitted users share the server-side `B24_DEFAULT_WEBHOOK`.
 Set `B24_TRANSPORT=http` plus `B24_PUBLIC_URL`, `B24_GOOGLE_CLIENT_ID`,
 `B24_GOOGLE_CLIENT_SECRET` and `B24_ALLOWED_EMAILS` (see `.env.example`). The
 target deployment is Docker + nginx on a VPS, one subdomain per MCP server.
+
+Webhook overrides are limited to the exact hosts configured by
+`B24_DEFAULT_WEBHOOK`, `B24_NOTE_WEBHOOK` or `B24_ALLOWED_WEBHOOK_HOSTS`. File-based
+configuration tools are confined to `B24_WORKSPACE_DIR`. Destructive tools and
+destructive methods passed through `b24_call`/`b24_batch` require `confirm: true`.
 
 ➡️ Full instructions: [`deploy/DEPLOY.md`](deploy/DEPLOY.md).
 
@@ -376,21 +381,16 @@ Once configured, you can ask Claude things like:
 
 ## Architecture
 
-```
-Claude (Claude Desktop / Claude Code)
-        │  MCP protocol (stdio)
-        ▼
-   index.js  (MCP server — 77 tools)
-        │
-   src/tools/      ← one file per functional area
-   src/bitrix24/   ← HTTP client with rate limiting & retry
-   src/utils/      ← pagination, rate limiter, user mapping
-        │
-        ▼
-  Bitrix24 REST API  (via incoming webhook)
-        │
-        ▼
-   Your Bitrix24 Portal
+```mermaid
+flowchart LR
+    Client[Claude / Codex] -->|stdio, local| MCP[Bitrix24 MCP]
+    Client -->|Google OAuth, temporary| Nginx[nginx]
+    Nginx -->|Streamable HTTP| MCP
+    Client -.->|target ingress| Gateway[GES MCP Gateway]
+    Gateway -.->|short-lived Ed25519 JWT| MCP
+    MCP -->|HTTPS REST v1/v3 webhook| Bitrix[GES Bitrix24]
+    MCP --> Workspace[(Workspace /data/workspace)]
+    MCP --> OAuth[(OAuth store /data/oauth-state.json)]
 ```
 
 The HTTP client enforces a **500 ms minimum delay** between requests to respect Bitrix24's rate limits, and retries automatically on `429 Too Many Requests` and timeout errors (up to 3 retries with exponential backoff).
@@ -403,9 +403,10 @@ This server includes tools designed for Bitrix24 consultants and partners who ne
 
 1. **Export** the source portal config with `b24_read_full_config`
 2. **Compare** it against the target with `b24_compare_configs`
-3. **Apply** it to the target with `b24_apply_config`
+3. **Apply** it to the target with `b24_apply_config` and `confirm: true`
 
 This workflow covers pipelines, stages, custom fields, currencies, SPA types, automations, and the product catalog.
+All referenced JSON files must be inside `B24_WORKSPACE_DIR`.
 
 ---
 

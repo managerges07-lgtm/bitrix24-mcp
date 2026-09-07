@@ -22,10 +22,10 @@ export async function saveUserMappingTool({ source_users, dest_users, output_fil
 
   const unmapped = source_users.filter(u => !mapping[u.ID]);
 
-  saveUserMapping(mapping, output_file);
+  const filePath = saveUserMapping(mapping, output_file);
 
   return {
-    saved_to: output_file,
+    saved_to: filePath,
     mapped_count: Object.keys(mapping).length,
     unmapped_count: unmapped.length,
     mapping,

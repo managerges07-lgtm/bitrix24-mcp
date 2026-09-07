@@ -109,10 +109,12 @@ export const crmDeleteSchema = z.object({
   entity: z.string().optional(),
   entity_type_id: z.number().int().optional(),
   id: z.union([z.string(), z.number()]),
+  confirm: z.literal(true).describe('Обязательное подтверждение удаления записи CRM'),
   webhook_url: z.string().url().optional(),
 });
 
-export async function crmDelete({ entity, entity_type_id, id, webhook_url }) {
+export async function crmDelete({ entity, entity_type_id, id, confirm, webhook_url }) {
+  if (confirm !== true) throw new Error('Удаление записи CRM требует confirm: true.');
   const client = new Bitrix24Client(resolveWebhook(webhook_url));
   const { base, extra } = resolveMethod(entity, entity_type_id);
   await client.call(`${base}.delete`, { id, ...extra });

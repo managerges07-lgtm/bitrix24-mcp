@@ -20,6 +20,9 @@ function envInt(name, def) {
 
 export function loadConfig() {
   const transport = (process.env.B24_TRANSPORT || 'stdio').trim().toLowerCase() || 'stdio';
+  if (!['stdio', 'http'].includes(transport)) {
+    throw new Error('B24_TRANSPORT must be either stdio or http.');
+  }
 
   const config = {
     transport,
@@ -47,6 +50,18 @@ export function loadConfig() {
     if (!config.googleClientSecret) missing.push('B24_GOOGLE_CLIENT_SECRET');
     if (missing.length) {
       throw new Error(`B24_TRANSPORT=http requires these variables: ${missing.join(', ')}`);
+    }
+    let publicUrl;
+    try {
+      publicUrl = new URL(config.publicUrl);
+    } catch {
+      throw new Error('B24_PUBLIC_URL must be a valid HTTPS URL.');
+    }
+    if (publicUrl.protocol !== 'https:' || publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash) {
+      throw new Error('B24_PUBLIC_URL must use HTTPS without credentials, query parameters, or fragments.');
+    }
+    if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) {
+      throw new Error('B24_PORT must be an integer between 1 and 65535.');
     }
     // OAuth proves the user signed in with Google, but does NOT restrict WHO. The
     // allowlist is the only access barrier; without it the server would let in any

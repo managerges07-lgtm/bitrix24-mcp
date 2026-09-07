@@ -288,10 +288,14 @@ export async function kb2PageUpdate({ id, title, markdown, overwrite, webhook_ur
 
 export const kb2PageDeleteSchema = z.object({
   id: z.union([z.string(), z.number()]).describe('ID документа'),
+  confirm: z.literal(true).describe('Подтверждение каскадного удаления документа и вложенных документов'),
   ...webhookShape,
 });
 
-export async function kb2PageDelete({ id, webhook_url }) {
+export async function kb2PageDelete({ id, confirm, webhook_url }) {
+  if (confirm !== true) {
+    throw new Error('Каскадное удаление документа требует confirm: true.');
+  }
   const client = new Bitrix24Client(resolveNoteWebhook(webhook_url));
 
   const res = await noteCall(client, 'note.document.delete', { id: Number(id) });

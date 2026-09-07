@@ -12,10 +12,20 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 
 import { GoogleOAuthProvider } from './auth/google-oauth-provider.js';
+import { SERVER_NAME, SERVER_VERSION } from './version.js';
+
+export function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
 
 // Minimal page for the "your account is not authorized" case.
 function forbiddenPage(email) {
-  const who = email ? ` (${email})` : '';
+  const who = email ? ` (${escapeHtml(email)})` : '';
   return `<!doctype html><html lang="en"><meta charset="utf-8">
 <title>Access denied</title>
 <body style="font-family:system-ui;max-width:32rem;margin:4rem auto;line-height:1.5">
@@ -73,7 +83,9 @@ export async function startHttpServer(config, registerTools) {
       }
       return res.redirect(result.redirectUrl);
     } catch (err) {
-      return res.status(400).type('html').send(`<h1>Authentication error</h1><p>${err.message}</p>`);
+      return res.status(400).type('html').send(
+        `<h1>Authentication error</h1><p>${escapeHtml(err.message)}</p>`
+      );
     }
   });
 
@@ -82,7 +94,7 @@ export async function startHttpServer(config, registerTools) {
   const bearer = requireBearerAuth({ verifier: provider, resourceMetadataUrl });
 
   app.post('/', bearer, async (req, res) => {
-    const server = new McpServer({ name: 'bitrix24-config', version: '2.0.0' });
+    const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
     registerTools(server);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {

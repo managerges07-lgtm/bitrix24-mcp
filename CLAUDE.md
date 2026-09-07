@@ -9,8 +9,9 @@ MCP-сервер (Model Context Protocol) для **Bitrix24**. Подключа�
 телефония, каталог товаров, чтение почты, база знаний (два движка: landing и 2.0),
 экспорт/сравнение/перенос конфигурации и универсальный вызов любого REST-метода.
 
-- Node.js ≥ 18, ESM (`"type": "module"` в package.json).
-- Зависимости: `@modelcontextprotocol/sdk`, `axios`, `zod`, а для http-режима — `express`, `cors`.
+- Node.js 24.20.0 LTS, ESM (`"type": "module"` в package.json).
+- Зависимости закреплены точно: `@modelcontextprotocol/sdk`, `axios`, `zod`, `jose`,
+  а для http-режима — `express`, `cors`. Установка только через `npm ci`.
 
 ## Команды
 
@@ -38,7 +39,7 @@ index.js                     точка входа: registerTools() + выбор
 │  ├─ reader.js              чтение структурной конфигурации (для миграции)
 │  └─ writer.js              применение конфигурации на целевой портал
 ├─ src/utils/                pagination, rate-limiter, resolve-webhook, user-mapping,
-│                            php-serialize (разбор сериализованных полей шаблонов)
+│                            safe-path, php-serialize (разбор сериализованных полей шаблонов)
 ├─ src/auth/                 GoogleOAuthProvider (только http-режим)
 └─ src/http-server.js        express-сервер для http-режима
 ```
@@ -60,6 +61,12 @@ server.tool('b24_xxx', 'Описание для модели', xxxSchema.shape, 
 получает вебхук через `resolveWebhook(webhook_url)`, создаёт `Bitrix24Client`, вызывает
 метод и возвращает объект (обычно с полем `portal`). Схемы почти всегда имеют
 опциональный `webhook_url`.
+
+`webhook_url` обязан использовать HTTPS и один из точных хостов, заданных через
+`B24_DEFAULT_WEBHOOK`, `B24_NOTE_WEBHOOK` или `B24_ALLOWED_WEBHOOK_HOSTS`.
+Файловые пути всегда пропускать через `src/utils/safe-path.js`: чтение и запись
+разрешены только внутри `B24_WORKSPACE_DIR`. Destructive-инструменты требуют
+`confirm: true`; универсальные `b24_call`/`b24_batch` проверяют destructive REST-методы централизованно.
 
 ### Клиент Bitrix24 (`src/bitrix24/client.js`)
 

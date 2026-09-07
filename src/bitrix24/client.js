@@ -20,11 +20,41 @@ function v3Error(error, data) {
 }
 
 export class Bitrix24Client {
-  constructor(webhookUrl) {
+  constructor(webhookUrl, { request = axios.post.bind(axios), minDelay = 500 } = {}) {
     this.webhookUrl = webhookUrl.endsWith('/') ? webhookUrl : webhookUrl + '/';
-    this.limiter = new RateLimiter(500);
+    this.limiter = new RateLimiter(minDelay);
+    this.request = request;
     this.portal = this._extractPortal(webhookUrl);
     this.v3BaseUrl = this._buildV3Base(this.webhookUrl);
+  }
+
+  _validateMethod(method) {
+    if (typeof method !== 'string' || !/^[a-z][a-z0-9_.]*$/i.test(method) || method.includes('..')) {
+      throw new Error('Bitrix24 REST method has an invalid format.');
+    }
+  }
+
+  _request(url, params, headers) {
+    return this.request(url, params, {
+      timeout: 30000,
+      maxRedirects: 0,
+      proxy: false,
+      ...(headers ? { headers } : {}),
+    });
+  }
+
+  async _retryDelay(err, attempt) {
+    if (err.response?.status === 429 && attempt < MAX_RETRIES) {
+      const parsed = Number.parseInt(err.response.headers?.['retry-after'] || '2', 10);
+      const seconds = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 0), 30) : 2;
+      await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+      return true;
+    }
+    if (err.code === 'ECONNABORTED' && attempt < MAX_RETRIES) {
+      await new Promise((resolve) => setTimeout(resolve, 2 ** attempt * 1000));
+      return true;
+    }
+    return false;
   }
 
   _extractPortal(url) {
@@ -48,29 +78,21 @@ export class Bitrix24Client {
     }
   }
 
-  async call(method, params = {}, retries = 0) {
-    return this.limiter.schedule(async () => {
+  async call(method, params = {}) {
+    this._validateMethod(method);
+    for (let attempt = 0; ; attempt += 1) {
       try {
         const url = `${this.webhookUrl}${method}.json`;
-        const response = await axios.post(url, params, { timeout: 30000 });
+        const response = await this.limiter.schedule(() => this._request(url, params));
         if (response.data.error) {
           throw new Error(`Bitrix24 error [${response.data.error}]: ${response.data.error_description}`);
         }
         return response.data;
       } catch (err) {
-        if (err.response?.status === 429 && retries < MAX_RETRIES) {
-          const retryAfter = parseInt(err.response.headers['retry-after'] || '2', 10);
-          await new Promise(r => setTimeout(r, retryAfter * 1000));
-          return this.call(method, params, retries + 1);
-        }
-        if (err.code === 'ECONNABORTED' && retries < MAX_RETRIES) {
-          const backoff = Math.pow(2, retries) * 1000;
-          await new Promise(r => setTimeout(r, backoff));
-          return this.call(method, params, retries + 1);
-        }
+        if (await this._retryDelay(err, attempt)) continue;
         throw err;
       }
-    });
+    }
   }
 
   // Calls a REST v3 method (no `.json` suffix, /rest/api/ base). v3 wraps errors
@@ -82,30 +104,20 @@ export class Bitrix24Client {
   // first answer for 24h, so a retried create returns it instead of making a
   // duplicate. Same rate limiting and retry policy as call().
   async callV3(method, params = {}, options = {}) {
-    const { idempotencyKey, retries = 0 } = options;
-    return this.limiter.schedule(async () => {
+    this._validateMethod(method);
+    const { idempotencyKey } = options;
+    for (let attempt = 0; ; attempt += 1) {
       try {
         const url = `${this.v3BaseUrl}${method}`;
-        const response = await axios.post(url, params, {
-          timeout: 30000,
-          ...(idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : {}),
-        });
+        const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined;
+        const response = await this.limiter.schedule(() => this._request(url, params, headers));
         if (response.data.error) throw v3Error(response.data.error, response.data);
         return response.data;
       } catch (err) {
-        if (err.response?.status === 429 && retries < MAX_RETRIES) {
-          const retryAfter = parseInt(err.response.headers['retry-after'] || '2', 10);
-          await new Promise(r => setTimeout(r, retryAfter * 1000));
-          return this.callV3(method, params, { ...options, retries: retries + 1 });
-        }
-        if (err.code === 'ECONNABORTED' && retries < MAX_RETRIES) {
-          const backoff = Math.pow(2, retries) * 1000;
-          await new Promise(r => setTimeout(r, backoff));
-          return this.callV3(method, params, { ...options, retries: retries + 1 });
-        }
+        if (await this._retryDelay(err, attempt)) continue;
         if (err.response?.data?.error) throw v3Error(err.response.data.error, err.response.data);
         throw err;
       }
-    });
+    }
   }
 }

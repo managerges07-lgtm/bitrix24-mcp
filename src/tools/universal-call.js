@@ -10,9 +10,22 @@ export const callSchema = z.object({
     'Параметры метода в виде JSON-объекта. Пример: { "filter": { "STAGE_ID": "WON" }, "select": ["ID","TITLE"] }'
   ),
   webhook_url: z.string().url().optional().describe('Опциональный вебхук, используется значение по умолчанию, если не указано'),
+  confirm: z.boolean().optional().default(false).describe('Обязательно true для destructive REST-методов'),
 });
 
-export async function universalCall({ method, params = {}, webhook_url }) {
+export function isDestructiveMethod(method) {
+  return /\.(?:delete\w*|remove\w*|archive|kill)$/i.test(method);
+}
+
+function requireDestructiveConfirmation(methods, confirm) {
+  const destructive = methods.filter(isDestructiveMethod);
+  if (destructive.length && confirm !== true) {
+    throw new Error(`Destructive REST method requires confirm: true: ${destructive.join(', ')}`);
+  }
+}
+
+export async function universalCall({ method, params = {}, webhook_url, confirm = false }) {
+  requireDestructiveConfirmation([method], confirm);
   const client = new Bitrix24Client(resolveWebhook(webhook_url));
   const response = await client.call(method, params);
   return {
@@ -36,9 +49,11 @@ export const batchSchema = z.object({
     'Пример: { "deals": { "method": "crm.deal.list", "params": { "filter": { "STAGE_ID": "NEW" } } } }'
   ),
   webhook_url: z.string().url().optional(),
+  confirm: z.boolean().optional().default(false).describe('Обязательно true, если batch содержит destructive REST-методы'),
 });
 
-export async function universalBatch({ calls, webhook_url }) {
+export async function universalBatch({ calls, webhook_url, confirm = false }) {
+  requireDestructiveConfirmation(Object.values(calls).map((call) => call.method), confirm);
   const client = new Bitrix24Client(resolveWebhook(webhook_url));
 
   // Bitrix24 batch format

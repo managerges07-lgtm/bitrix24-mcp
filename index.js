@@ -1,6 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig } from './src/config.js';
+import { resolveWebhook } from './src/utils/resolve-webhook.js';
+import { SERVER_NAME, SERVER_VERSION } from './src/version.js';
 
 // ── Универсальные ─────────────────────────────────────────────────────────────
 import { callSchema, universalCall, batchSchema, universalBatch } from './src/tools/universal-call.js';
@@ -178,7 +180,7 @@ server.tool('b24_crm_update',
   crmUpdateSchema.shape, wrap(crmUpdate));
 
 server.tool('b24_crm_delete',
-  'Удаляет запись CRM по ID.',
+  'Удаляет запись CRM по ID. Требует confirm: true.',
   crmDeleteSchema.shape, wrap(crmDelete));
 
 server.tool('b24_crm_fields',
@@ -441,7 +443,7 @@ server.tool('b24_kb_block_update',
 
 server.tool('b24_kb_block_delete',
   'Удаляет блок из статьи базы знаний. Нужен, в частности, чтобы вычистить демо-контент шаблона ' +
-  'после копирования страницы.',
+  'после копирования страницы. Требует confirm: true.',
   kbBlockDeleteSchema.shape, wrap(kbBlockDelete));
 
 server.tool('b24_kb_card_add',
@@ -451,7 +453,7 @@ server.tool('b24_kb_card_add',
 
 server.tool('b24_kb_card_remove',
   'Удаляет карточку из блока статьи по селектору с индексом. Так убираются лишние ' +
-  'пункты и колонки, оставшиеся от шаблона блока.',
+  'пункты и колонки, оставшиеся от шаблона блока. Требует confirm: true.',
   kbCardRemoveSchema.shape, wrap(kbCardRemove));
 
 server.tool('b24_kb_image_upload',
@@ -499,7 +501,7 @@ server.tool('b24_kb2_page_update',
 
 server.tool('b24_kb2_page_delete',
   'Удаляет документ базы знаний 2.0 в корзину. Удаление каскадное: вложенные документы ' +
-  'уезжают вместе с родителем.',
+  'уезжают вместе с родителем. Требует confirm: true.',
   kb2PageDeleteSchema.shape, wrap(kb2PageDelete));
 
 server.tool('b24_kb2_search',
@@ -519,7 +521,7 @@ server.tool('b24_kb2_file_add',
 
 // Local transport (Claude Desktop): a single long-lived server over stdio.
 async function runStdio() {
-  const server = new McpServer({ name: 'bitrix24-config', version: '2.0.0' });
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
   registerTools(server);
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -528,7 +530,7 @@ async function runStdio() {
   if (process.env.B24_DEFAULT_WEBHOOK) {
     try {
       const { Bitrix24Client } = await import('./src/bitrix24/client.js');
-      const client = new Bitrix24Client(process.env.B24_DEFAULT_WEBHOOK);
+      const client = new Bitrix24Client(resolveWebhook());
       const res = await client.call('profile');
       const name = `${res.result?.NAME || ''} ${res.result?.LAST_NAME || ''}`.trim();
       process.stderr.write(`[bitrix24] ✓ Подключено к ${client.portal} как ${name} | активных инструментов: ${Object.keys(server._registeredTools ?? {}).length || 77}\n`);

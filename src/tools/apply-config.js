@@ -1,18 +1,20 @@
 import { z } from 'zod';
-import { readFileSync } from 'fs';
 import { Bitrix24Client } from '../bitrix24/client.js';
 import { Bitrix24Writer } from '../bitrix24/writer.js';
 import { applyUserMapping } from '../utils/user-mapping.js';
 import { resolveWebhook } from '../utils/resolve-webhook.js';
+import { readWorkspaceJson } from '../utils/safe-path.js';
 
 export const applyConfigSchema = z.object({
   config_file: z.string().describe('Путь к JSON-файлу конфигурации для применения'),
   webhook_url: z.string().url().optional().describe('Вебхук целевой инстанции (необязательно, если настроен по умолчанию)'),
   user_mapping_file: z.string().optional().describe('Путь к JSON сопоставления пользователей (для автоматизаций)'),
+  confirm: z.literal(true).describe('Подтверждение записи конфигурации в целевой Bitrix24'),
 });
 
-export async function applyConfig({ config_file, webhook_url, user_mapping_file }) {
-  const config = JSON.parse(readFileSync(config_file, 'utf-8'));
+export async function applyConfig({ config_file, webhook_url, user_mapping_file, confirm }) {
+  if (confirm !== true) throw new Error('Применение конфигурации требует confirm: true.');
+  const { data: config } = readWorkspaceJson(config_file);
   const client = new Bitrix24Client(resolveWebhook(webhook_url));
   const writer = new Bitrix24Writer(client);
 

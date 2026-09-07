@@ -9,6 +9,8 @@
 // [MCP TEST] и удаляет их за собой. Нужен B24_DEFAULT_WEBHOOK.
 
 import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -16,6 +18,12 @@ import {
   extractTags, embedTags, buildCrmCodes, normalizeTemplate,
 } from '../src/tools/task-templates.js';
 import { phpUnserialize, toIdList, toObject } from '../src/utils/php-serialize.js';
+import { resolveWebhook } from '../src/utils/resolve-webhook.js';
+import { readWorkspaceJson, resolvePathWithin, writeWorkspaceJson } from '../src/utils/safe-path.js';
+import { isDestructiveMethod } from '../src/tools/universal-call.js';
+import { GoogleOAuthProvider } from '../src/auth/google-oauth-provider.js';
+import { escapeHtml } from '../src/http-server.js';
+import { Bitrix24Client } from '../src/bitrix24/client.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TEST_USER_ID = Number(process.env.B24_TEST_USER_ID || 359);
@@ -135,7 +143,109 @@ class McpStdioClient {
 
 // ─── Юнит-тесты: чистые функции, без сети ─────────────────────────────────────
 
-function runUnitTests() {
+async function runUnitTests() {
+  section('Юнит-тесты: границы безопасности');
+
+  const savedDefaultWebhook = process.env.B24_DEFAULT_WEBHOOK;
+  const savedNoteWebhook = process.env.B24_NOTE_WEBHOOK;
+  const savedAllowedHosts = process.env.B24_ALLOWED_WEBHOOK_HOSTS;
+  try {
+    process.env.B24_DEFAULT_WEBHOOK = 'https://example.bitrix24.ru/rest/1/test-token/';
+    delete process.env.B24_NOTE_WEBHOOK;
+    delete process.env.B24_ALLOWED_WEBHOOK_HOSTS;
+
+    check('настроенный HTTPS webhook разрешён',
+      resolveWebhook() === 'https://example.bitrix24.ru/rest/1/test-token/');
+
+    let rejectedHost = false;
+    try { resolveWebhook('https://internal.example/rest/1/test-token/'); } catch { rejectedHost = true; }
+    check('webhook на постороннем хосте запрещён', rejectedHost);
+
+    let rejectedProtocol = false;
+    try { resolveWebhook('http://example.bitrix24.ru/rest/1/test-token/'); } catch { rejectedProtocol = true; }
+    check('webhook без HTTPS запрещён', rejectedProtocol);
+  } finally {
+    if (savedDefaultWebhook === undefined) delete process.env.B24_DEFAULT_WEBHOOK;
+    else process.env.B24_DEFAULT_WEBHOOK = savedDefaultWebhook;
+    if (savedNoteWebhook === undefined) delete process.env.B24_NOTE_WEBHOOK;
+    else process.env.B24_NOTE_WEBHOOK = savedNoteWebhook;
+    if (savedAllowedHosts === undefined) delete process.env.B24_ALLOWED_WEBHOOK_HOSTS;
+    else process.env.B24_ALLOWED_WEBHOOK_HOSTS = savedAllowedHosts;
+  }
+
+  const workspace = path.join(ROOT, 'data');
+  check('вложенный путь остаётся в workspace',
+    resolvePathWithin(workspace, 'exports/config.json').startsWith(workspace));
+  let rejectedTraversal = false;
+  try { resolvePathWithin(workspace, '../oauth-state.json'); } catch { rejectedTraversal = true; }
+  check('выход из workspace запрещён', rejectedTraversal);
+
+  const savedWorkspace = process.env.B24_WORKSPACE_DIR;
+  const tempRoot = mkdtempSync(path.join(tmpdir(), 'bitrix24-mcp-test-'));
+  try {
+    process.env.B24_WORKSPACE_DIR = path.join(tempRoot, 'workspace');
+    const written = writeWorkspaceJson('nested/config.json', { ok: true });
+    const loaded = readWorkspaceJson('nested/config.json');
+    check('workspace JSON записывается и читается',
+      written === loaded.filePath && loaded.data.ok === true);
+  } finally {
+    if (savedWorkspace === undefined) delete process.env.B24_WORKSPACE_DIR;
+    else process.env.B24_WORKSPACE_DIR = savedWorkspace;
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+
+  check('destructive REST-методы распознаются',
+    isDestructiveMethod('crm.deal.delete') &&
+    isDestructiveMethod('landing.landing.deleteblock') &&
+    isDestructiveMethod('bizproc.workflow.kill'));
+  check('read-only REST-методы не требуют destructive confirm',
+    !isDestructiveMethod('crm.deal.get') && !isDestructiveMethod('crm.deal.list'));
+
+  const provider = new GoogleOAuthProvider({
+    publicUrl: 'https://mcp.example.invalid',
+    googleClientId: 'test-client',
+    googleClientSecret: 'test-only',
+    allowedEmails: ['operator@example.invalid'],
+  });
+  let googleRedirect = '';
+  await provider.authorize(
+    { client_id: 'test-mcp-client' },
+    { redirectUri: 'https://client.example.invalid/callback', codeChallenge: 'challenge' },
+    { redirect: (url) => { googleRedirect = url; } }
+  );
+  const googleUrl = new URL(googleRedirect);
+  check('Google OAuth запрос содержит state и nonce',
+    Boolean(googleUrl.searchParams.get('state') && googleUrl.searchParams.get('nonce')));
+  check('HTML auth-ошибки экранируются',
+    escapeHtml('<script>') === '&lt;script&gt;');
+
+  let requestAttempts = 0;
+  let capturedOptions;
+  const retryClient = new Bitrix24Client(
+    'https://example.bitrix24.ru/rest/1/test-token/',
+    {
+      minDelay: 0,
+      request: async (_url, _params, options) => {
+        requestAttempts += 1;
+        capturedOptions = options;
+        if (requestAttempts === 1) {
+          const error = new Error('rate limited');
+          error.response = { status: 429, headers: { 'retry-after': '0' } };
+          throw error;
+        }
+        return { data: { result: true } };
+      },
+    }
+  );
+  const retried = await retryClient.call('profile');
+  check('429 повторяется без deadlock', retried.result === true && requestAttempts === 2);
+  check('webhook-запросы не используют proxy и redirect',
+    capturedOptions.proxy === false && capturedOptions.maxRedirects === 0);
+
+  let rejectedMethod = false;
+  try { await retryClient.call('../profile'); } catch { rejectedMethod = true; }
+  check('REST method с path traversal запрещён', rejectedMethod);
+
   section('Юнит-тесты: разбор PHP-сериализации');
 
   check('toIdList разворачивает список ID',
@@ -288,6 +398,18 @@ async function runToolsListTests(client) {
   const fromTemplate = tools.find(t => t.name === 'b24_task_create_from_template');
   check('у b24_task_create_from_template есть защита от дублей',
     Boolean(fromTemplate?.inputSchema?.properties?.dedup_window_hours));
+
+  for (const name of [
+    'b24_crm_delete',
+    'b24_apply_config',
+    'b24_kb_block_delete',
+    'b24_kb_card_remove',
+    'b24_kb2_page_delete',
+  ]) {
+    const tool = tools.find(t => t.name === name);
+    check(`${name} требует confirm`,
+      (tool?.inputSchema?.required ?? []).includes('confirm'));
+  }
 
   return names.length;
 }
@@ -570,7 +692,7 @@ const args = process.argv.slice(2);
 const liveOnly = args.includes('--live-only');
 const withLive = liveOnly || args.includes('--live');
 
-if (!liveOnly) runUnitTests();
+if (!liveOnly) await runUnitTests();
 
 const client = new McpStdioClient();
 try {

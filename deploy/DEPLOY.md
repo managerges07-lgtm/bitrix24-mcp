@@ -31,6 +31,10 @@ B24_DEFAULT_WEBHOOK=https://your-portal.bitrix24.com/rest/1/your-token/
 # tools fall back to the webhook above and will answer 403 if it has no `note` scope.
 B24_NOTE_WEBHOOK=https://your-portal.bitrix24.com/rest/359/your-token/
 
+# Optional: exact additional hosts allowed for per-call webhook_url overrides.
+# Hosts from B24_DEFAULT_WEBHOOK and B24_NOTE_WEBHOOK are allowed automatically.
+# B24_ALLOWED_WEBHOOK_HOSTS=another-portal.bitrix24.com
+
 B24_TRANSPORT=http
 B24_HOST=0.0.0.0
 B24_PORT=8001
@@ -38,6 +42,10 @@ B24_PUBLIC_URL=https://btrx-mcp.texpertiza.ru
 B24_GOOGLE_CLIENT_ID=<...>.apps.googleusercontent.com
 B24_GOOGLE_CLIENT_SECRET=GOCSPX-<...>
 B24_ALLOWED_EMAILS=manager.ges.07@gmail.com
+
+# File tools are restricted to this persistent subdirectory. Docker sets the
+# same value by default; keep it separate from /data/oauth-state.json.
+B24_WORKSPACE_DIR=/data/workspace
 ```
 
 > `B24_PUBLIC_URL` with no trailing slash. The redirect URI in Google must be
@@ -120,6 +128,15 @@ and access/refresh tokens to `/data/oauth-state.json` (path from
 file is written `0600` and lives in a Docker named volume owned by `appuser`
 (uid 10001). It holds bearer tokens — treat it like a credential. To force all
 users to re-login, remove the volume: `docker compose down && docker volume rm bitrix24-mcp_oauth-data`.
+
+**Workspace:** file-based tools can read and write only below
+`B24_WORKSPACE_DIR` (`/data/workspace` in Docker). Absolute paths outside it,
+path traversal and symlink escapes are rejected. This prevents access to the
+OAuth token store and other container files.
+
+**Destructive calls:** CRM deletion, Knowledge Base 2.0 document deletion,
+configuration apply, and destructive methods sent through `b24_call`/`b24_batch`
+require `confirm: true`.
 
 ## Updating a version
 

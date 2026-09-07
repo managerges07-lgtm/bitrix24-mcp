@@ -1,14 +1,9 @@
-import { readFileSync, writeFileSync } from 'fs';
+import { readWorkspaceJson, writeWorkspaceJson } from './safe-path.js';
 
 export function applyUserMapping(automations, mappingFilePath) {
   if (!mappingFilePath) return automations;
 
-  let mapping;
-  try {
-    mapping = JSON.parse(readFileSync(mappingFilePath, 'utf-8'));
-  } catch {
-    return automations;
-  }
+  const { data: mapping } = readWorkspaceJson(mappingFilePath);
 
   const str = JSON.stringify(automations);
   let result = str;
@@ -33,5 +28,5 @@ export function suggestUserMapping(sourceUsers, destUsers) {
 }
 
 export function saveUserMapping(mapping, outputFile) {
-  writeFileSync(outputFile, JSON.stringify(mapping, null, 2), 'utf-8');
+  return writeWorkspaceJson(outputFile, mapping);
 }

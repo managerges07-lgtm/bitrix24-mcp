@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import { writeFileSync } from 'fs';
-import { join } from 'path';
 import { Bitrix24Client } from '../bitrix24/client.js';
 import { Bitrix24Reader } from '../bitrix24/reader.js';
 import { resolveWebhook } from '../utils/resolve-webhook.js';
+import { writeWorkspaceJson } from '../utils/safe-path.js';
+import { SERVER_VERSION } from '../version.js';
 
 export const readConfigSchema = z.object({
   webhook_url: z.string().url().optional().describe('URL вебхука (опционально, если настроен по умолчанию)'),
@@ -28,7 +28,7 @@ export async function readFullConfig({ webhook_url, output_file, verbose = false
     meta: {
       exported_at: new Date().toISOString(),
       portal: client.portal,
-      mcp_version: '1.0.0',
+      mcp_version: SERVER_VERSION,
     },
     entity_types: {
       standard: entityData.standard,
@@ -44,10 +44,8 @@ export async function readFullConfig({ webhook_url, output_file, verbose = false
   };
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const defaultFile = join(process.cwd(), `config_${client.portal}_${timestamp}.json`);
-  const filePath = output_file || defaultFile;
-
-  writeFileSync(filePath, JSON.stringify(config, null, 2), 'utf-8');
+  const defaultFile = `config_${client.portal}_${timestamp}.json`;
+  const filePath = writeWorkspaceJson(output_file, config, { defaultName: defaultFile });
 
   const summary = {
     portal: client.portal,

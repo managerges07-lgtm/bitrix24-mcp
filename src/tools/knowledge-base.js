@@ -341,10 +341,12 @@ export async function kbBlockUpdate({ page_id, block_id, nodes, webhook_url }) {
 export const kbBlockDeleteSchema = z.object({
   page_id: z.union([z.string(), z.number()]).describe('ID страницы'),
   block_id: z.union([z.string(), z.number()]).describe('ID блока в ЧЕРНОВИКЕ страницы'),
+  confirm: z.literal(true).describe('Обязательное подтверждение удаления блока'),
   webhook_url: z.string().url().optional(),
 });
 
-export async function kbBlockDelete({ page_id, block_id, webhook_url }) {
+export async function kbBlockDelete({ page_id, block_id, confirm, webhook_url }) {
+  if (confirm !== true) throw new Error('Удаление блока требует confirm: true.');
   const client = new Bitrix24Client(resolveWebhook(webhook_url));
 
   const res = await client.call('landing.landing.deleteblock', {
@@ -393,10 +395,12 @@ export const kbCardRemoveSchema = z.object({
     'Селектор удаляемой карточки с обязательным индексом. Пример: ".landing-block-card@3". ' +
     'После удаления индексы оставшихся карточек сдвигаются, поэтому несколько карточек удобнее удалять с конца'
   ),
+  confirm: z.literal(true).describe('Обязательное подтверждение удаления карточки из блока'),
   webhook_url: z.string().url().optional(),
 });
 
-export async function kbCardRemove({ page_id, block_id, selector, webhook_url }) {
+export async function kbCardRemove({ page_id, block_id, selector, confirm, webhook_url }) {
+  if (confirm !== true) throw new Error('Удаление карточки требует confirm: true.');
   const client = new Bitrix24Client(resolveWebhook(webhook_url));
 
   const res = await client.call('landing.block.removecard', {

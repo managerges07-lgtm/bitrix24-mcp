@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { readFileSync } from 'fs';
+import { readWorkspaceJson } from '../utils/safe-path.js';
 
 export const compareConfigsSchema = z.object({
   source_file: z.string().describe('Путь к JSON-файлу исходной конфигурации'),
@@ -17,8 +17,8 @@ function diffArrayByName(srcArr, dstArr, nameKey = 'NAME') {
 }
 
 export async function compareConfigs({ source_file, dest_file }) {
-  const source = JSON.parse(readFileSync(source_file, 'utf-8'));
-  const dest = JSON.parse(readFileSync(dest_file, 'utf-8'));
+  const { data: source } = readWorkspaceJson(source_file);
+  const { data: dest } = readWorkspaceJson(dest_file);
 
   const report = {
     source_portal: source.meta?.portal,
