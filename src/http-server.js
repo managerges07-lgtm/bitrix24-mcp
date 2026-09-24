@@ -12,6 +12,7 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 
 import { GoogleOAuthProvider } from './auth/google-oauth-provider.js';
+import { getDefaultBitrixOAuthProvider } from './bitrix24/oauth-provider.js';
 import { SERVER_NAME, SERVER_VERSION } from './version.js';
 
 export function escapeHtml(value) {
@@ -35,6 +36,23 @@ function forbiddenPage(email) {
 </body></html>`;
 }
 
+export function bitrixInstallationHandler(bitrixProvider) {
+  return async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      if (String(req.body?.event || '').toUpperCase() !== 'ONAPPINSTALL') {
+        return res.status(400).type('text').send('Unsupported event.');
+      }
+      await bitrixProvider.acceptInstallation(req.body?.auth);
+      return res.status(200).type('text').send('OK');
+    } catch (err) {
+      process.stderr.write(`[bitrix24] OAuth installation callback rejected: ${err.message}\n`);
+      return res.status(403).type('text').send('Forbidden.');
+    }
+  };
+}
+
+
 // `registerTools` is passed in (not imported) to avoid an index ↔ http-server
 // import cycle: index.js is a top-level-await module, and a static import back
 // into it would deadlock the async module graph.
@@ -57,9 +75,19 @@ export async function startHttpServer(config, registerTools) {
   );
   // High limit: tools like b24_apply_config send large configuration JSON.
   app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '100kb', parameterLimit: 100 }));
 
   // Public healthcheck (no auth): used by the Docker healthcheck.
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+
+  // Bitrix24 local API-only application callback. This is intentionally public:
+  // Bitrix24 calls it during installation before any MCP/Google OAuth session
+  // exists. The first request is verified with `profile` against the configured
+  // portal; subsequent requests must carry the stored application_token.
+  if (config.bitrixOAuthInstallEnabled) {
+    const bitrixProvider = getDefaultBitrixOAuthProvider();
+    app.post('/bitrix/oauth/install', bitrixInstallationHandler(bitrixProvider));
+  }
 
   // OAuth endpoints acting as an Authorization Server towards Claude:
   // /.well-known/*, /authorize, /token, /register.

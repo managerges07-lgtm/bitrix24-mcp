@@ -1,6 +1,6 @@
 # Bitrix24 MCP Server
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that connects **Claude** to your **Bitrix24** portal via an incoming webhook.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that connects **Claude** to your **Bitrix24** portal via OAuth 2.0 or a legacy incoming webhook.
 
 Once configured, Claude can read and write CRM records, manage tasks, browse your disk, send notifications, query the product catalog, run business processes, and much more — all from natural conversation.
 
@@ -37,7 +37,7 @@ Built and maintained by **[Bit2Beat](https://bit2beat.com)** — Bitrix24 specia
 
 - [Node.js](https://nodejs.org) **24.20.0 LTS**
 - [Claude Desktop](https://claude.ai/download) or [Claude Code](https://claude.ai/code)
-- A Bitrix24 incoming webhook URL
+- A Bitrix24 local API-only application (OAuth, recommended for remote use) or an incoming webhook URL (legacy/rollback)
 
 ---
 
@@ -56,7 +56,7 @@ cd bitrix24-mcp
 npm ci
 ```
 
-### 3. Create your Bitrix24 webhook
+### 3A. Create your Bitrix24 webhook (legacy/rollback)
 
 > **Administrator required.** Only a Bitrix24 portal administrator can create incoming webhooks. This is a platform security restriction — webhooks act as system-level credentials and can carry broader permissions than a regular user session.
 
@@ -79,6 +79,24 @@ npm ci
 If you need to edit the webhook or add more scopes after the initial setup:
 
 **Applications → Webhooks → Incoming webhooks → (click your webhook name)**
+
+### 3B. Configure outgoing Bitrix24 OAuth (recommended for remote use)
+
+Create a local server-side application in Bitrix24 with **Uses API only** enabled.
+The application runs as the employee who installs it, so use the approved
+technical user and select only the required scopes. The initial installation
+path is:
+
+```text
+<B24_PUBLIC_URL>/bitrix/oauth/install
+```
+
+Set `B24_BITRIX_AUTH_MODE=oauth` and the `B24_BITRIX_*` variables documented in
+[the OAuth migration runbook](docs/BITRIX_OAUTH.md). Access and rotating refresh
+tokens are stored in an encrypted persistent file. The client refreshes the pair
+only after Bitrix24 returns `expired_token` and then retries the original call
+once. In OAuth mode all tools share this application identity, including
+`b24_kb2_*`; per-call `webhook_url` overrides are disabled.
 
 ### 4. Configure Claude Desktop
 
@@ -126,13 +144,15 @@ connector*, gated by **Google OAuth + an email allowlist**.
 
 In this mode the server acts as an OAuth Authorization Server for Claude and uses
 Google to authenticate the real user; only emails listed in `B24_ALLOWED_EMAILS`
-are admitted. All admitted users share the server-side `B24_DEFAULT_WEBHOOK`.
+are admitted. All admitted users share the configured server-side Bitrix24
+identity: the local OAuth application in OAuth mode or `B24_DEFAULT_WEBHOOK` in
+legacy mode.
 
 Set `B24_TRANSPORT=http` plus `B24_PUBLIC_URL`, `B24_GOOGLE_CLIENT_ID`,
 `B24_GOOGLE_CLIENT_SECRET` and `B24_ALLOWED_EMAILS` (see `.env.example`). The
 target deployment is Docker + nginx on a VPS, one subdomain per MCP server.
 
-Webhook overrides are limited to the exact hosts configured by
+In webhook mode, overrides are limited to the exact hosts configured by
 `B24_DEFAULT_WEBHOOK`, `B24_NOTE_WEBHOOK` or `B24_ALLOWED_WEBHOOK_HOSTS`. File-based
 configuration tools are confined to `B24_WORKSPACE_DIR`. Destructive tools and
 destructive methods passed through `b24_call`/`b24_batch` require `confirm: true`.
@@ -388,9 +408,11 @@ flowchart LR
     Nginx -->|Streamable HTTP| MCP
     Client -.->|target ingress| Gateway[GES MCP Gateway]
     Gateway -.->|short-lived Ed25519 JWT| MCP
-    MCP -->|HTTPS REST v1/v3 webhook| Bitrix[GES Bitrix24]
+    MCP -->|HTTPS REST v1/v3, OAuth auth parameter| Bitrix[GES Bitrix24]
+    MCP -.->|legacy rollback webhook| Bitrix
     MCP --> Workspace[(Workspace /data/workspace)]
-    MCP --> OAuth[(OAuth store /data/oauth-state.json)]
+    MCP --> OAuth[(Client OAuth store /data/oauth-state.json)]
+    MCP --> BitrixOAuth[(Encrypted Bitrix OAuth store /data/bitrix-oauth.json)]
 ```
 
 The HTTP client enforces a **500 ms minimum delay** between requests to respect Bitrix24's rate limits, and retries automatically on `429 Too Many Requests` and timeout errors (up to 3 retries with exponential backoff).
@@ -421,7 +443,7 @@ npm run test:live   # additionally runs end-to-end against the portal
 template normalization) and then boots the server over stdio and asserts that `tools/list` exposes the
 expected tools and that none of the existing ones disappeared.
 
-`npm run test:live` needs `B24_DEFAULT_WEBHOOK`. It creates a temporary task user field, a template and
+`npm run test:live` needs a configured Bitrix24 webhook or OAuth store. It creates a temporary task user field, a template and
 tasks named `[MCP TEST] …` on the portal, verifies tags, CRM bindings, user fields, checklists,
 duplicate protection and input validation, then **deletes everything it created**. Override the actors
 with `B24_TEST_USER_ID` and `B24_TEST_DEAL_ID`.
@@ -450,3 +472,20 @@ Contributions are welcome. Please open an issue first to discuss what you would 
 [Bit2Beat](https://bit2beat.com) is a Bitrix24 specialist firm. We build integrations, automations, and AI-powered tools on top of the Bitrix24 platform.
 
 If you need help implementing this MCP server or building custom Bitrix24 integrations, feel free to reach out at [info@bit2beat.com](mailto:info@bit2beat.com).
+
+
+## TaskCreator integration (local candidate, disabled by default)
+
+Optional `b24_taskcreator_*` tools call the GES Assistant API with a separate
+60-second Ed25519 JWT. Set `B24_TASKCREATOR_ENABLED`, `B24_TASKCREATOR_BASE_URL`
+and `B24_TASKCREATOR_PRIVATE_KEY_FILE` only after outgoing Bitrix OAuth is ready.
+The Assistant technical account must match the MCP application account; OAuth
+token stores remain independent. Public APIs outside TaskCreator are not exposed.
+
+Tools: schema/list/get/validate, create_draft/save_draft/publish/rollback/delete,
+context/preview/create. All require `deal_id`; publish/rollback/delete/create also
+require explicit `confirm=true`. Delete retains template history and existing tasks.
+No integration HTTP request is retried automatically. Test with `npm test`;
+read-only deployment smoke: `node scripts/taskcreator-smoke.mjs <deal_id>`.
+The canonical two-stage release runbook is
+`ges-operations/runbooks/taskcreator-mcp-oauth-release.md` in the workspace.

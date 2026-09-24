@@ -9,7 +9,8 @@
 // [MCP TEST] и удаляет их за собой. Нужен B24_DEFAULT_WEBHOOK.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -24,6 +25,7 @@ import { isDestructiveMethod } from '../src/tools/universal-call.js';
 import { GoogleOAuthProvider } from '../src/auth/google-oauth-provider.js';
 import { escapeHtml } from '../src/http-server.js';
 import { Bitrix24Client } from '../src/bitrix24/client.js';
+import { BitrixOAuthProvider, EncryptedOAuthTokenStore } from '../src/bitrix24/oauth-provider.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TEST_USER_ID = Number(process.env.B24_TEST_USER_ID || 359);
@@ -242,9 +244,196 @@ async function runUnitTests() {
   check('webhook-запросы не используют proxy и redirect',
     capturedOptions.proxy === false && capturedOptions.maxRedirects === 0);
 
+  const failingClient = new Bitrix24Client(
+    'https://example.bitrix24.ru/rest/1/test-token/',
+    {
+      minDelay: 0,
+      request: async () => {
+        const error = new Error('network blocked');
+        error.code = 'EACCES';
+        error.config = { url: 'https://example.bitrix24.ru/rest/1/test-token/profile.json' };
+        error.request = { path: '/rest/1/test-token/profile.json' };
+        throw error;
+      },
+    }
+  );
+  let sanitizedError;
+  try { await failingClient.call('profile'); } catch (err) { sanitizedError = err; }
+  check('transport error не выпускает credential-bearing config/request',
+    sanitizedError?.code === 'EACCES' && !sanitizedError.config && !sanitizedError.request);
+
   let rejectedMethod = false;
   try { await retryClient.call('../profile'); } catch { rejectedMethod = true; }
   check('REST method с path traversal запрещён', rejectedMethod);
+
+  section('Юнит-тесты: исходящий Bitrix24 OAuth');
+
+  const oauthTempRoot = mkdtempSync(path.join(tmpdir(), 'bitrix24-oauth-test-'));
+  try {
+    const tokenStorePath = path.join(oauthTempRoot, 'bitrix-oauth.json');
+    const tokenStore = new EncryptedOAuthTokenStore(tokenStorePath, randomBytes(32));
+    let profileChecks = 0;
+    let refreshCalls = 0;
+    const oauthProvider = new BitrixOAuthProvider(
+      {
+        portalHost: 'example.bitrix24.ru',
+        clientId: 'test-client-id',
+        clientSecret: 'test-client-secret',
+        tokenUrl: 'https://oauth.bitrix24.tech/oauth/token/',
+      },
+      {
+        store: tokenStore,
+        request: async (options) => {
+          if (options.url.endsWith('/profile.json')) {
+            profileChecks += 1;
+            return { data: { result: { ID: '1' } } };
+          }
+          refreshCalls += 1;
+          return {
+            data: {
+              access_token: 'access-after-refresh',
+              refresh_token: 'refresh-after-refresh',
+              client_endpoint: 'https://example.bitrix24.ru/rest/',
+              member_id: 'member-test',
+              scope: 'crm,user,note',
+              expires_in: 3600,
+            },
+          };
+        },
+      }
+    );
+
+    const installed = await oauthProvider.acceptInstallation({
+      access_token: 'access-before-refresh',
+      refresh_token: 'refresh-before-refresh',
+      application_token: 'application-token-test',
+      client_endpoint: 'https://example.bitrix24.ru/rest/',
+      member_id: 'member-test',
+      scope: 'crm,user,note',
+      expires_in: 3600,
+    });
+    check('первичная OAuth-установка проверяет access token через profile',
+      profileChecks === 1 && installed.memberId === 'member-test');
+
+    const rawStore = readFileSync(tokenStorePath, 'utf8');
+    check('OAuth token store не содержит токены в открытом виде',
+      !rawStore.includes('access-before-refresh') &&
+      !rawStore.includes('refresh-before-refresh') &&
+      !rawStore.includes('application-token-test'));
+
+    const beforeRefresh = await oauthProvider.getAccessContext();
+    check('OAuth provider возвращает сохранённый client_endpoint',
+      beforeRefresh.clientEndpoint === 'https://example.bitrix24.ru/rest/');
+
+    let foreignEndpointRejected = false;
+    try {
+      await oauthProvider.acceptInstallation({
+        access_token: 'foreign-access',
+        refresh_token: 'foreign-refresh',
+        application_token: 'application-token-test',
+        client_endpoint: 'https://attacker.example/rest/',
+        member_id: 'member-test',
+      });
+    } catch { foreignEndpointRejected = true; }
+    check('installation callback отвергает client_endpoint другого портала', foreignEndpointRejected);
+
+    let foreignIdentityRejected = false;
+    try {
+      await oauthProvider.acceptInstallation({
+        access_token: 'foreign-access',
+        refresh_token: 'foreign-refresh',
+        application_token: 'different-application-token',
+        client_endpoint: 'https://example.bitrix24.ru/rest/',
+        member_id: 'member-test',
+      });
+    } catch { foreignIdentityRejected = true; }
+    check('повторный callback обязан совпасть с application identity',
+      foreignIdentityRejected && profileChecks === 1);
+
+    const refreshed = await Promise.all([
+      oauthProvider.refreshAccessToken('access-before-refresh'),
+      oauthProvider.refreshAccessToken('access-before-refresh'),
+    ]);
+    check('параллельный expired_token вызывает ровно один refresh',
+      refreshCalls === 1 && refreshed.every(value => value.accessToken === 'access-after-refresh'));
+
+    let activeAccessToken = 'expired-access';
+    let clientRefreshCalls = 0;
+    const clientRequests = [];
+    const clientOAuthProvider = {
+      portalHost: 'example.bitrix24.ru',
+      async getAccessContext() {
+        return {
+          accessToken: activeAccessToken,
+          clientEndpoint: 'https://example.bitrix24.ru/rest/',
+        };
+      },
+      async refreshAccessToken(rejected) {
+        if (rejected === activeAccessToken) {
+          clientRefreshCalls += 1;
+          activeAccessToken = 'fresh-access';
+        }
+      },
+    };
+    const oauthClient = new Bitrix24Client(
+      { type: 'oauth', provider: clientOAuthProvider },
+      {
+        minDelay: 0,
+        request: async (url, params, options) => {
+          clientRequests.push({ url, params, options });
+          if (params.auth === 'expired-access') {
+            return { data: { error: 'expired_token', error_description: 'expired' } };
+          }
+          return { data: { result: true } };
+        },
+      }
+    );
+    const oauthResult = await oauthClient.call('profile');
+    check('REST-вызов обновляет OAuth пару после expired_token и повторяется один раз',
+      oauthResult.result === true && clientRefreshCalls === 1 && clientRequests.length === 2);
+    check('OAuth access token передаётся в auth, а не в URL',
+      clientRequests[1].params.auth === 'fresh-access' &&
+      !clientRequests.some(entry => entry.url.includes('access')));
+
+    activeAccessToken = 'expired-v3-access';
+    let v3Attempts = 0;
+    const oauthV3Client = new Bitrix24Client(
+      { type: 'oauth', provider: clientOAuthProvider },
+      {
+        minDelay: 0,
+        request: async (url, params) => {
+          v3Attempts += 1;
+          if (v3Attempts === 1) {
+            const error = new Error('expired');
+            error.response = {
+              status: 401,
+              data: { error: { code: 'expired_token', message: 'expired' } },
+            };
+            throw error;
+          }
+          return { data: { result: { ok: true }, url, auth: params.auth } };
+        },
+      }
+    );
+    const v3Result = await oauthV3Client.callV3('mail.message.list');
+    check('REST v3 распознаёт объект expired_token, обновляет пару и использует /rest/api/',
+      v3Attempts === 2 &&
+      v3Result.url === 'https://example.bitrix24.ru/rest/api/mail.message.list' &&
+      v3Result.auth === 'fresh-access');
+
+    const savedAuthMode = process.env.B24_BITRIX_AUTH_MODE;
+    try {
+      process.env.B24_BITRIX_AUTH_MODE = 'oauth';
+      let overrideRejected = false;
+      try { resolveWebhook('https://example.bitrix24.ru/rest/1/test-token/'); } catch { overrideRejected = true; }
+      check('webhook_url override запрещён в OAuth-режиме', overrideRejected);
+    } finally {
+      if (savedAuthMode === undefined) delete process.env.B24_BITRIX_AUTH_MODE;
+      else process.env.B24_BITRIX_AUTH_MODE = savedAuthMode;
+    }
+  } finally {
+    rmSync(oauthTempRoot, { recursive: true, force: true });
+  }
 
   section('Юнит-тесты: разбор PHP-сериализации');
 
@@ -699,7 +888,7 @@ try {
   await client.start();
   if (!liveOnly) await runToolsListTests(client);
   if (withLive) {
-    if (!process.env.B24_DEFAULT_WEBHOOK) {
+    if (!process.env.B24_DEFAULT_WEBHOOK && process.env.B24_BITRIX_AUTH_MODE !== 'oauth') {
       console.log('\nЖивой прогон пропущен: не задан B24_DEFAULT_WEBHOOK.');
     } else {
       await runLiveTests(client);

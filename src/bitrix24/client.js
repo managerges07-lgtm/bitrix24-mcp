@@ -19,13 +19,50 @@ function v3Error(error, data) {
   return err;
 }
 
+function classicError(data) {
+  const err = new Error(`Bitrix24 error [${data.error}]: ${data.error_description || 'unknown error'}`);
+  err.b24 = { code: data.error, message: data.error_description };
+  return err;
+}
+
+function isExpiredToken(err) {
+  const responseError = err.response?.data?.error;
+  const responseCode = responseError && typeof responseError === 'object'
+    ? responseError.code
+    : responseError;
+  return (err.b24?.code || responseCode) === 'expired_token';
+}
+
+function sanitizedTransportError(error) {
+  const safeMessage = error?.response?.status
+    ? `Bitrix24 HTTP request failed with status ${error.response.status}.`
+    : `Bitrix24 network request failed [${error?.code || 'unknown'}].`;
+  const clean = new Error(safeMessage);
+  clean.code = error?.code;
+  if (error?.response) {
+    clean.response = {
+      status: error.response.status,
+      headers: error.response.headers,
+      data: error.response.data,
+    };
+  }
+  return clean;
+}
+
 export class Bitrix24Client {
-  constructor(webhookUrl, { request = axios.post.bind(axios), minDelay = 500 } = {}) {
-    this.webhookUrl = webhookUrl.endsWith('/') ? webhookUrl : webhookUrl + '/';
+  constructor(connection, { request = axios.post.bind(axios), minDelay = 500 } = {}) {
+    if (typeof connection === 'string') {
+      this.webhookUrl = connection.endsWith('/') ? connection : connection + '/';
+      this.portal = this._extractPortal(connection);
+      this.v3BaseUrl = this._buildV3Base(this.webhookUrl);
+    } else if (connection?.type === 'oauth' && connection.provider) {
+      this.oauthProvider = connection.provider;
+      this.portal = connection.provider.portalHost;
+    } else {
+      throw new Error('Bitrix24 connection must be a webhook URL or an OAuth provider.');
+    }
     this.limiter = new RateLimiter(minDelay);
     this.request = request;
-    this.portal = this._extractPortal(webhookUrl);
-    this.v3BaseUrl = this._buildV3Base(this.webhookUrl);
   }
 
   _validateMethod(method) {
@@ -34,16 +71,25 @@ export class Bitrix24Client {
     }
   }
 
-  _request(url, params, headers) {
-    return this.request(url, params, {
-      timeout: 30000,
-      maxRedirects: 0,
-      proxy: false,
-      ...(headers ? { headers } : {}),
-    });
+  async _request(url, params, headers) {
+    try {
+      return await this.request(url, params, {
+        timeout: 30000,
+        maxRedirects: 0,
+        proxy: false,
+        ...(headers ? { headers } : {}),
+      });
+    } catch (err) {
+      // Axios errors retain the full request URL. In webhook mode that path is
+      // itself a credential, so never let config/request objects escape.
+      throw sanitizedTransportError(err);
+    }
   }
 
-  async _retryDelay(err, attempt) {
+  async _retryDelay(err, attempt, method) {
+    // Unknown methods (including batch) may write. Never replay them after an
+    // ambiguous transport failure. Only an explicit read suffix is retryable.
+    if (!/(?:\.(?:get|list|fields|info)|^(?:profile|user.current))$/i.test(method)) return false;
     if (err.response?.status === 429 && attempt < MAX_RETRIES) {
       const parsed = Number.parseInt(err.response.headers?.['retry-after'] || '2', 10);
       const seconds = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 0), 30) : 2;
@@ -80,16 +126,26 @@ export class Bitrix24Client {
 
   async call(method, params = {}) {
     this._validateMethod(method);
+    let authRefreshed = false;
     for (let attempt = 0; ; attempt += 1) {
+      let context;
       try {
-        const url = `${this.webhookUrl}${method}.json`;
-        const response = await this.limiter.schedule(() => this._request(url, params));
+        context = this.oauthProvider ? await this.oauthProvider.getAccessContext() : null;
+        const baseUrl = context?.clientEndpoint || this.webhookUrl;
+        const requestParams = context ? { ...params, auth: context.accessToken } : params;
+        const url = `${baseUrl}${method}.json`;
+        const response = await this.limiter.schedule(() => this._request(url, requestParams));
         if (response.data.error) {
-          throw new Error(`Bitrix24 error [${response.data.error}]: ${response.data.error_description}`);
+          throw classicError(response.data);
         }
         return response.data;
       } catch (err) {
-        if (await this._retryDelay(err, attempt)) continue;
+        if (this.oauthProvider && !authRefreshed && isExpiredToken(err)) {
+          await this.oauthProvider.refreshAccessToken(context?.accessToken);
+          authRefreshed = true;
+          continue;
+        }
+        if (await this._retryDelay(err, attempt, method)) continue;
         throw err;
       }
     }
@@ -106,15 +162,25 @@ export class Bitrix24Client {
   async callV3(method, params = {}, options = {}) {
     this._validateMethod(method);
     const { idempotencyKey } = options;
+    let authRefreshed = false;
     for (let attempt = 0; ; attempt += 1) {
+      let context;
       try {
-        const url = `${this.v3BaseUrl}${method}`;
+        context = this.oauthProvider ? await this.oauthProvider.getAccessContext() : null;
+        const v3BaseUrl = context ? this._buildV3Base(context.clientEndpoint) : this.v3BaseUrl;
+        const requestParams = context ? { ...params, auth: context.accessToken } : params;
+        const url = `${v3BaseUrl}${method}`;
         const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined;
-        const response = await this.limiter.schedule(() => this._request(url, params, headers));
+        const response = await this.limiter.schedule(() => this._request(url, requestParams, headers));
         if (response.data.error) throw v3Error(response.data.error, response.data);
         return response.data;
       } catch (err) {
-        if (await this._retryDelay(err, attempt)) continue;
+        if (this.oauthProvider && !authRefreshed && isExpiredToken(err)) {
+          await this.oauthProvider.refreshAccessToken(context?.accessToken);
+          authRefreshed = true;
+          continue;
+        }
+        if (await this._retryDelay(err, attempt, method)) continue;
         if (err.response?.data?.error) throw v3Error(err.response.data.error, err.response.data);
         throw err;
       }

@@ -23,17 +23,21 @@ cd /opt/bitrix24-mcp
 Create `/opt/bitrix24-mcp/.env`:
 
 ```
-# Bitrix24 incoming webhook (credential SHARED by all authorized users).
+# Outgoing Bitrix24 authentication. Keep `webhook` during the preparation phase;
+# switch to `oauth` only after the installation callback and read-only smoke pass.
+B24_BITRIX_AUTH_MODE=webhook
+B24_BITRIX_OAUTH_INSTALL_ENABLED=false
+B24_BITRIX_PORTAL_HOST=your-portal.bitrix24.com
+B24_BITRIX_CLIENT_ID=<local application client id>
+B24_BITRIX_CLIENT_SECRET=<local application client secret>
+B24_BITRIX_OAUTH_TOKEN_URL=https://oauth.bitrix24.tech/oauth/token/
+B24_BITRIX_TOKEN_STORE_PATH=/data/bitrix-oauth.json
+B24_BITRIX_TOKEN_ENCRYPTION_KEY=<32-byte unpadded base64url value>
+
+# Temporary rollback credentials. Retain them through the observation window;
+# OAuth mode does not read either value.
 B24_DEFAULT_WEBHOOK=https://your-portal.bitrix24.com/rest/1/your-token/
-
-# Knowledge Base 2.0 (b24_kb2_* tools) — needs the `note` scope, which usually lives on a
-# personal webhook. Also decides who authors the documents. Optional; without it those
-# tools fall back to the webhook above and will answer 403 if it has no `note` scope.
 B24_NOTE_WEBHOOK=https://your-portal.bitrix24.com/rest/359/your-token/
-
-# Optional: exact additional hosts allowed for per-call webhook_url overrides.
-# Hosts from B24_DEFAULT_WEBHOOK and B24_NOTE_WEBHOOK are allowed automatically.
-# B24_ALLOWED_WEBHOOK_HOSTS=another-portal.bitrix24.com
 
 B24_TRANSPORT=http
 B24_HOST=0.0.0.0
@@ -51,9 +55,13 @@ B24_WORKSPACE_DIR=/data/workspace
 > `B24_PUBLIC_URL` with no trailing slash. The redirect URI in Google must be
 > exactly `https://btrx-mcp.texpertiza.ru/auth/callback`.
 >
-> ⚠️ Every email in `B24_ALLOWED_EMAILS` shares the SAME Bitrix24 webhook and can
+> ⚠️ Every email in `B24_ALLOWED_EMAILS` shares the SAME Bitrix24 OAuth identity and can
 > run any REST method (including `b24_call`). The allowlist is the only barrier of
-> who may use that webhook — keep it short.
+> who may use that identity — keep it short.
+
+The staged OAuth installation, cutover, and rollback procedure is in
+[`docs/BITRIX_OAUTH.md`](../docs/BITRIX_OAUTH.md). Do not enable the public
+installation callback longer than the controlled installation window.
 
 ## 3. Build and run
 
@@ -112,7 +120,8 @@ To add another MCP server:
 
 ## Security
 
-**`.env` permissions** (it holds the Bitrix webhook and the Google secret):
+**`.env` permissions** (it holds OAuth client secrets, the storage encryption
+key, temporary webhook rollback credentials, and the Google secret):
 ```bash
 chmod 600 /opt/bitrix24-mcp/.env
 ```
@@ -128,6 +137,10 @@ and access/refresh tokens to `/data/oauth-state.json` (path from
 file is written `0600` and lives in a Docker named volume owned by `appuser`
 (uid 10001). It holds bearer tokens — treat it like a credential. To force all
 users to re-login, remove the volume: `docker compose down && docker volume rm bitrix24-mcp_oauth-data`.
+
+**Bitrix24 OAuth store:** `/data/bitrix-oauth.json` contains only an encrypted
+AES-256-GCM envelope. Its separate key remains in `.env`. Preserve both across
+ordinary restarts and deployments; do not print either the envelope or key.
 
 **Workspace:** file-based tools can read and write only below
 `B24_WORKSPACE_DIR` (`/data/workspace` in Docker). Absolute paths outside it,

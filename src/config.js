@@ -4,6 +4,8 @@
 //   - stdio (default) — local run next to Claude Desktop, no auth;
 //   - http — remote server with Google OAuth and an email allowlist.
 
+import { loadBitrixOAuthConfig } from './bitrix24/oauth-provider.js';
+
 function parseEmails(raw) {
   return (raw || '')
     .replace(/;/g, ',')
@@ -18,14 +20,25 @@ function envInt(name, def) {
   return Number.isNaN(n) ? def : n;
 }
 
+function envBool(name) {
+  return ['1', 'true', 'yes', 'on'].includes((process.env[name] || '').trim().toLowerCase());
+}
+
 export function loadConfig() {
   const transport = (process.env.B24_TRANSPORT || 'stdio').trim().toLowerCase() || 'stdio';
   if (!['stdio', 'http'].includes(transport)) {
     throw new Error('B24_TRANSPORT must be either stdio or http.');
   }
 
+  const bitrixAuthMode = (process.env.B24_BITRIX_AUTH_MODE || 'webhook').trim().toLowerCase() || 'webhook';
+  if (!['webhook', 'oauth'].includes(bitrixAuthMode)) {
+    throw new Error('B24_BITRIX_AUTH_MODE must be either webhook or oauth.');
+  }
+
   const config = {
     transport,
+    bitrixAuthMode,
+    bitrixOAuthInstallEnabled: envBool('B24_BITRIX_OAUTH_INSTALL_ENABLED'),
     host: (process.env.B24_HOST || '127.0.0.1').trim() || '127.0.0.1',
     port: envInt('B24_PORT', 8001),
     // No trailing slash: the redirect URI is built as `${publicUrl}/auth/callback`.
@@ -71,6 +84,14 @@ export function loadConfig() {
         'B24_ALLOWED_EMAILS is empty: in http mode the email allowlist is mandatory, ' +
           'otherwise the server would let in any Google user.'
       );
+    }
+  }
+
+  if (config.bitrixAuthMode === 'oauth' || config.bitrixOAuthInstallEnabled) {
+    loadBitrixOAuthConfig();
+    config.bitrixInstallCallbackAvailable = config.transport === 'http';
+    if (config.bitrixOAuthInstallEnabled && config.transport !== 'http') {
+      throw new Error('B24_BITRIX_OAUTH_INSTALL_ENABLED requires B24_TRANSPORT=http.');
     }
   }
 

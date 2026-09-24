@@ -2,13 +2,14 @@
   "name": "bitrix24-mcp",
   "version": "2.0.0",
   "private": true,
-  "description": "MCP server for Bitrix24 — connect Claude to your CRM, tasks, disk, calendar, and more via an incoming webhook.",
+  "description": "MCP server for Bitrix24 — connect Claude to CRM, tasks, disk, calendar, and more via OAuth or an incoming webhook.",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "test": "node tests/run-tests.mjs",
-    "test:live": "node tests/run-tests.mjs --live"
+    "test": "node --test tests/taskcreator.test.mjs && node tests/run-tests.mjs",
+    "test:live": "node tests/run-tests.mjs --live",
+    "smoke:bitrix-oauth": "node scripts/oauth-smoke.mjs"
   },
   "keywords": [
     "mcp",

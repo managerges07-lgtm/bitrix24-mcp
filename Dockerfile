@@ -9,6 +9,7 @@ RUN npm ci --omit=dev --no-audit --no-fund
 # Application code.
 COPY index.js ./
 COPY src ./src
+COPY scripts ./scripts
 
 # The process runs as a non-privileged user. /data holds the OAuth store and is
 # owned by appuser so a named volume mounted there inherits writable ownership.
@@ -23,6 +24,7 @@ ENV B24_TRANSPORT=http \
     B24_HOST=0.0.0.0 \
     B24_PORT=8001 \
     B24_OAUTH_STORE_PATH=/data/oauth-state.json \
+    B24_BITRIX_TOKEN_STORE_PATH=/data/bitrix-oauth.json \
     B24_WORKSPACE_DIR=/data/workspace
 
 EXPOSE 8001

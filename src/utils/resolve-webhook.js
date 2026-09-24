@@ -1,3 +1,13 @@
+import { getDefaultBitrixOAuthProvider } from '../bitrix24/oauth-provider.js';
+
+function bitrixAuthMode() {
+  const mode = (process.env.B24_BITRIX_AUTH_MODE || 'webhook').trim().toLowerCase() || 'webhook';
+  if (!['webhook', 'oauth'].includes(mode)) {
+    throw new Error('B24_BITRIX_AUTH_MODE must be either webhook or oauth.');
+  }
+  return mode;
+}
+
 function configuredHosts() {
   const hosts = new Set(
     (process.env.B24_ALLOWED_WEBHOOK_HOSTS || '')
@@ -48,6 +58,12 @@ export function validateWebhookUrl(raw) {
 }
 
 export function resolveWebhook(webhookParam) {
+  if (bitrixAuthMode() === 'oauth') {
+    if (webhookParam) {
+      throw new Error('Per-call webhook_url overrides are disabled in Bitrix24 OAuth mode.');
+    }
+    return { type: 'oauth', provider: getDefaultBitrixOAuthProvider() };
+  }
   const url = webhookParam || process.env.B24_DEFAULT_WEBHOOK;
   if (!url) {
     throw new Error(
@@ -65,6 +81,12 @@ export function resolveWebhook(webhookParam) {
 // Если переменная не задана, работаем общим вебхуком: инструменты b24_kb2_* сами
 // объяснят, что делать, если у него не окажется scope.
 export function resolveNoteWebhook(webhookParam) {
+  if (bitrixAuthMode() === 'oauth') {
+    if (webhookParam) {
+      throw new Error('Per-call webhook_url overrides are disabled in Bitrix24 OAuth mode.');
+    }
+    return { type: 'oauth', provider: getDefaultBitrixOAuthProvider() };
+  }
   const url = webhookParam || process.env.B24_NOTE_WEBHOOK || process.env.B24_DEFAULT_WEBHOOK;
   if (!url) {
     throw new Error(

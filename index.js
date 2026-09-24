@@ -1,3 +1,4 @@
+import { registerTaskcreatorTools } from './src/tools/taskcreator.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig } from './src/config.js';
@@ -146,6 +147,7 @@ function wrap(fn) {
 // Registers ALL tools on an McpServer. Reused by the stdio transport (a single
 // long-lived server) and by the http transport (a fresh server per request).
 export function registerTools(server) {
+  registerTaskcreatorTools(server, wrap);
 // ── Универсальные ─────────────────────────────────────────────────────────────
 server.tool('b24_call',
   'Вызывает ЛЮБОЙ REST-метод API Bitrix24. Используйте, когда нет специализированного инструмента. ' +
@@ -527,7 +529,7 @@ async function runStdio() {
   await server.connect(transport);
 
   // Автопроверка подключения при запуске
-  if (process.env.B24_DEFAULT_WEBHOOK) {
+  if (process.env.B24_DEFAULT_WEBHOOK || config.bitrixAuthMode === 'oauth') {
     try {
       const { Bitrix24Client } = await import('./src/bitrix24/client.js');
       const client = new Bitrix24Client(resolveWebhook());
