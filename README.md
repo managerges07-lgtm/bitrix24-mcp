@@ -328,6 +328,13 @@ Use this when you want Claude to operate as a full Bitrix24 assistant — readin
 - `b24_mail_mailbox_senders` — List available sender addresses; optional `page`, `limit` (1–100, default 25) and `offset`.
 - `b24_mail_message_send` — Send a new email from an available `from` address to a nonempty `to` array, with `subject`, `body` (plain text or basic HTML), optional `cc` and `bcc` arrays. Attachments are not supported by this tool.
 
+- `b24_mail_message_reply` — Reply to an existing message using a required positive integer
+  `reply_to_message_id` from `b24_mail_message_list`. Supply the same explicit
+  `from`, `to`, `subject`, `body`, optional `cc`/`bcc` as for send.
+  The tool links the reply to that message via REST v3 `replyToMessageId`;
+  it does not automatically choose recipients or implement reply-all.
+  Reference: [mail.message.reply](https://apidocs.bitrix24.ru/api-reference/mail/message/mail-message-reply.html).
+
 Send only when the user explicitly requests sending. Choose `from` using
 `b24_mail_mailbox_senders`. The tool returns the API's `success` and `to`; a successful
 API response does not prove recipient delivery. Writes are not automatically retried

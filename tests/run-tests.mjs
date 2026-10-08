@@ -542,6 +542,7 @@ async function runUnitTests() {
 
 const NEW_TOOLS = [
   'b24_mail_message_send',
+  'b24_mail_message_reply',
   'b24_mail_mailbox_senders',
   'b24_task_template_create',
   'b24_task_template_list',

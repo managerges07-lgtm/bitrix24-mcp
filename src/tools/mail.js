@@ -147,11 +147,27 @@ export const mailMessageSendSchema = z.object({
 
 export async function mailMessageSend(args) {
   const { webhook_url, ...params } = mailMessageSendSchema.parse(args);
+  return sendMail('mail.message.send', params, webhook_url);
+}
+
+// https://apidocs.bitrix24.ru/api-reference/mail/message/mail-message-reply.html
+export const mailMessageReplySchema = mailMessageSendSchema.extend({
+  reply_to_message_id: z.number().int().positive().safe().describe(
+    'ID исходного письма из b24_mail_message_list. Ответ будет связан с этим письмом; получателей укажите явно.'
+  ),
+});
+
+export async function mailMessageReply(args) {
+  const { reply_to_message_id, webhook_url, ...params } = mailMessageReplySchema.parse(args);
+  return sendMail('mail.message.reply', { ...params, replyToMessageId: reply_to_message_id }, webhook_url);
+}
+
+async function sendMail(method, params, webhook_url) {
   const client = new Bitrix24Client(resolveWebhook(webhook_url));
   // callV3 does not retry writes after timeouts, HTTP 429 or transport failures.
-  const res = await client.callV3('mail.message.send', params);
+  const res = await client.callV3(method, params);
   if (typeof res.result?.success !== 'boolean' || !Array.isArray(res.result?.to)) {
-    throw new Error('Некорректный ответ mail.message.send: результат отправки неизвестен. Проверьте отправленные письма перед повтором.');
+    throw new Error(`Некорректный ответ ${method}: результат отправки неизвестен. Проверьте отправленные письма перед повтором.`);
   }
   return { portal: client.portal, success: res.result.success, to: res.result.to };
 }

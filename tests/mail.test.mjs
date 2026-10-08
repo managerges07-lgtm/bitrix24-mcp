@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Bitrix24Client } from '../src/bitrix24/client.js';
-import { mailMessageSend, mailMessageSendSchema, mailMailboxSenders } from '../src/tools/mail.js';
+import { mailMessageSend, mailMessageSendSchema, mailMailboxSenders, mailMessageReply, mailMessageReplySchema } from '../src/tools/mail.js';
 
 const message = {
   from: 'sender@example.com', to: ['recipient@example.com'],
@@ -96,21 +96,54 @@ test('senders omits unspecified pagination', async t => {
   assert.deepEqual((await mailMailboxSenders({})).senders, []);
 });
 
+test('reply uses REST v3 reply with original message ID and explicit recipients', async t => {
+  const call = mockCall(t, async (method, params) => {
+    assert.equal(method, 'mail.message.reply');
+    assert.deepEqual(params, { ...message, replyToMessageId: 123, cc: ['copy@example.com'], bcc: ['hidden@example.com'] });
+    return { result: { success: true, to: message.to } };
+  });
+  assert.deepEqual(await mailMessageReply({ ...message, reply_to_message_id: 123, cc: ['copy@example.com'], bcc: ['hidden@example.com'] }),
+    { portal: 'example.invalid', success: true, to: message.to });
+  assert.equal(call.mock.callCount(), 1);
+});
+
+test('reply validates source ID and inherited send fields before any request', async t => {
+  const call = mockCall(t, async () => { throw new Error('Must not call'); });
+  for (const id of [undefined, null, 0, -1, 1.5, '123', Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(mailMessageReply({ ...message, reply_to_message_id: id }));
+  }
+  for (const fields of [{ to: [] }, { from: 'invalid' }, { subject: '' }, { body: '' }, { cc: ['invalid'] }, { bcc: ['invalid'] }]) {
+    await assert.rejects(mailMessageReply({ ...message, reply_to_message_id: 123, ...fields }));
+  }
+  assert.equal(mailMessageReplySchema.safeParse({ ...message, replyToMessageId: 123 }).success, false);
+  assert.equal(call.mock.callCount(), 0);
+});
+
+test('reply preserves failure and rejects unknown outcome without resending', async t => {
+  let response = { result: { success: false, to: [] } };
+  const call = mockCall(t, async () => response);
+  assert.equal((await mailMessageReply({ ...message, reply_to_message_id: 123 })).success, false);
+  response = { result: {} };
+  await assert.rejects(mailMessageReply({ ...message, reply_to_message_id: 123 }), /mail.message.reply.*результат отправки неизвестен/);
+  assert.equal(call.mock.callCount(), 2);
+});
+
+for (const method of ['mail.message.send', 'mail.message.reply'])
 for (const failure of [
   { code: 'ECONNABORTED' }, { code: 'ECONNRESET' },
   { response: { status: 429, data: {} } }, { response: { status: 500, data: {} } },
 ]) {
-  test(`REST client never retries mail send after ${failure.code || failure.response.status}`, async () => {
+  test(`REST client never retries ${method} after ${failure.code || failure.response.status}`, async () => {
     let requests = 0;
     const client = new Bitrix24Client('https://example.invalid/rest/1/fixture/', {
       minDelay: 0,
       request: async url => {
-        assert.equal(url, 'https://example.invalid/rest/api/1/fixture/mail.message.send');
+        assert.equal(url, 'https://example.invalid/rest/api/1/fixture/' + method);
         requests++;
         throw failure;
       },
     });
-    await assert.rejects(client.callV3('mail.message.send', message));
+    await assert.rejects(client.callV3(method, { ...message, ...(method.endsWith('.reply') ? { replyToMessageId: 123 } : {}) }));
     assert.equal(requests, 1);
   });
 }

@@ -100,6 +100,7 @@ import {
   mailMessageThreadSchema, mailMessageThread,
   mailMailboxSendersSchema, mailMailboxSenders,
   mailMessageSendSchema, mailMessageSend,
+  mailMessageReplySchema, mailMessageReply,
 } from './src/tools/mail.js';
 
 // ── База знаний ───────────────────────────────────────────────────────────────
@@ -417,6 +418,13 @@ server.tool('b24_mail_message_send',
   'Поддерживает текст, базовый HTML, CC и BCC; вложения не поддерживаются. Требуется scope mail и доступный отправитель. ' +
   'После таймаута результат неизвестен: проверьте отправленные письма перед повтором. success не подтверждает доставку адресату.',
   mailMessageSendSchema.shape, wrap(mailMessageSend));
+
+server.tool('b24_mail_message_reply',
+  'Отправляет ответ на существующее письмо через REST v3 mail.message.reply с привязкой к reply_to_message_id. ' +
+  'Вызывать только по явному поручению пользователя. from, to, subject, body задаются явно; CC/BCC необязательны. ' +
+  'Не добавляет исходных получателей автоматически. Вложения не поддерживаются. Требуется scope mail и доступ к ящику. ' +
+  'После таймаута проверьте отправленные письма перед повтором; success не подтверждает доставку адресату.',
+  mailMessageReplySchema.shape, wrap(mailMessageReply));
 
 // ── База знаний (модуль landing, требуется scope `landing`) ───────────────────
 server.tool('b24_kb_list',
