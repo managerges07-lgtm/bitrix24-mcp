@@ -7,7 +7,7 @@ const MAX_RETRIES = 3;
 // `validation` says WHICH field was rejected — the most useful part when filling
 // forms — so it is folded into the message. The parsed error is also attached as
 // `err.b24` so callers can branch on the code (e.g. a missing scope).
-function v3Error(error, data) {
+function v3Error(error, data, status) {
   const isObject = error && typeof error === 'object';
   const code = isObject ? error.code : error;
   const message = (isObject ? error.message : data?.error_description) ?? 'unknown error';
@@ -16,6 +16,7 @@ function v3Error(error, data) {
 
   const err = new Error(`Bitrix24 error [${code}]: ${message}${details ? ` (${details})` : ''}`);
   err.b24 = { code, message, validation };
+  err.httpStatus = status;
   return err;
 }
 
@@ -31,6 +32,13 @@ function isExpiredToken(err) {
     ? responseError.code
     : responseError;
   return (err.b24?.code || responseCode) === 'expired_token';
+}
+
+function isV3AuthenticationDenied(err) {
+  // Bitrix REST v3 masks expired OAuth tokens as access denied (HTTP 401).
+  // A real permission denial (403) must not trigger refresh or replay.
+  return err.response?.status === 401 &&
+    err.response?.data?.error?.code === 'BITRIX_REST_V3_EXCEPTION_ACCESSDENIEDEXCEPTION';
 }
 
 function sanitizedTransportError(error) {
@@ -172,16 +180,16 @@ export class Bitrix24Client {
         const url = `${v3BaseUrl}${method}`;
         const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined;
         const response = await this.limiter.schedule(() => this._request(url, requestParams, headers));
-        if (response.data.error) throw v3Error(response.data.error, response.data);
+        if (response.data.error) throw v3Error(response.data.error, response.data, response.status);
         return response.data;
       } catch (err) {
-        if (this.oauthProvider && !authRefreshed && isExpiredToken(err)) {
+        if (this.oauthProvider && !authRefreshed && (isExpiredToken(err) || isV3AuthenticationDenied(err))) {
           await this.oauthProvider.refreshAccessToken(context?.accessToken);
           authRefreshed = true;
           continue;
         }
         if (await this._retryDelay(err, attempt, method)) continue;
-        if (err.response?.data?.error) throw v3Error(err.response.data.error, err.response.data);
+        if (err.response?.data?.error) throw v3Error(err.response.data.error, err.response.data, err.response.status);
         throw err;
       }
     }

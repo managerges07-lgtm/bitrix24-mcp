@@ -1,4 +1,5 @@
 import { registerTaskcreatorTools } from './src/tools/taskcreator.js';
+import { logToolError } from './src/utils/tool-error-log.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig } from './src/config.js';
@@ -136,6 +137,7 @@ function wrap(fn) {
       const result = await fn(params);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
+      logToolError(fn.name, err);
       const msg = err.response?.data
         ? `${err.message}\nBitrix24: ${JSON.stringify(err.response.data)}`
         : err.message;
