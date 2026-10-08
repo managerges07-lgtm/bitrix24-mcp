@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "test": "node --test tests/taskcreator.test.mjs tests/oauth-refresh.test.mjs && node tests/run-tests.mjs",
+    "test": "node --test tests/taskcreator.test.mjs tests/oauth-refresh.test.mjs tests/mail.test.mjs && node tests/run-tests.mjs",
     "test:live": "node tests/run-tests.mjs --live",
     "smoke:bitrix-oauth": "node scripts/oauth-smoke.mjs"
   },

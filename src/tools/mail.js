@@ -3,7 +3,7 @@ import { Bitrix24Client } from '../bitrix24/client.js';
 import { resolveWebhook } from '../utils/resolve-webhook.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Чтение почты (Bitrix24 REST v3, семейство методов mail.*)
+// Чтение и отправка почты (Bitrix24 REST v3, семейство методов mail.*)
 //
 // Это методы REST v3: они находятся под /rest/api/ (client.callV3), используют
 // постраничную навигацию через объект { page, limit, offset } и возвращают данные
@@ -116,4 +116,42 @@ export async function mailMessageThread({ id, limit, webhook_url }) {
   });
   const messages = res.result ?? [];
   return { portal: client.portal, count: messages.length, messages };
+}
+
+// https://apidocs.bitrix24.ru/api-reference/mail/mailbox/mail-mailbox-senders.html
+export const mailMailboxSendersSchema = z.object({
+  ...paginationShape,
+  limit: z.number().int().positive().max(100).optional().describe('Количество отправителей: по умолчанию 25, максимум 100'),
+  webhook_url: z.string().url().optional(),
+});
+
+export async function mailMailboxSenders(args) {
+  const { page, limit, offset, webhook_url } = mailMailboxSendersSchema.parse(args);
+  const client = new Bitrix24Client(resolveWebhook(webhook_url));
+  const res = await client.callV3('mail.mailbox.senders', buildPagination({ page, limit, offset }));
+  const senders = res.result?.items ?? [];
+  return { portal: client.portal, count: senders.length, senders };
+}
+
+// https://apidocs.bitrix24.ru/api-reference/mail/message/mail-message-send.html
+const emailAddress = z.string().trim().email();
+export const mailMessageSendSchema = z.object({
+  from: emailAddress.describe('Email отправителя из b24_mail_mailbox_senders'),
+  to: z.array(emailAddress).min(1).describe('Email-адреса получателей, минимум один'),
+  subject: z.string().min(1).refine(value => value.trim().length > 0 && !/[\r\n]/.test(value), 'Укажите непустую тему без переносов строк').describe('Тема письма'),
+  body: z.string().min(1).refine(value => value.trim().length > 0, 'Укажите текст письма').describe('Текст письма или базовый HTML; передаётся без изменений'),
+  cc: z.array(emailAddress).optional().describe('Email-адреса получателей копии'),
+  bcc: z.array(emailAddress).optional().describe('Email-адреса получателей скрытой копии'),
+  webhook_url: z.string().url().optional(),
+}).strict();
+
+export async function mailMessageSend(args) {
+  const { webhook_url, ...params } = mailMessageSendSchema.parse(args);
+  const client = new Bitrix24Client(resolveWebhook(webhook_url));
+  // callV3 does not retry writes after timeouts, HTTP 429 or transport failures.
+  const res = await client.callV3('mail.message.send', params);
+  if (typeof res.result?.success !== 'boolean' || !Array.isArray(res.result?.to)) {
+    throw new Error('Некорректный ответ mail.message.send: результат отправки неизвестен. Проверьте отправленные письма перед повтором.');
+  }
+  return { portal: client.portal, success: res.result.success, to: res.result.to };
 }

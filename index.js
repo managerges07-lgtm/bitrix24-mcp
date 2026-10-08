@@ -92,12 +92,14 @@ import {
   productsSectionsSchema, productsSections,
 } from './src/tools/catalog-products.js';
 
-// ── Почта (чтение) ────────────────────────────────────────────────────────────
+// ── Почта ─────────────────────────────────────────────────────────────────────
 import {
   mailMailboxListSchema, mailMailboxList,
   mailMessageListSchema, mailMessageList,
   mailMessageGetSchema, mailMessageGet,
   mailMessageThreadSchema, mailMessageThread,
+  mailMailboxSendersSchema, mailMailboxSenders,
+  mailMessageSendSchema, mailMessageSend,
 } from './src/tools/mail.js';
 
 // ── База знаний ───────────────────────────────────────────────────────────────
@@ -405,6 +407,16 @@ server.tool('b24_mail_message_get',
 server.tool('b24_mail_message_thread',
   'Возвращает цепочку писем по ID любого сообщения переписки. Максимум 50.',
   mailMessageThreadSchema.shape, wrap(mailMessageThread));
+
+server.tool('b24_mail_mailbox_senders',
+  'Возвращает доступных текущему пользователю отправителей для b24_mail_message_send. Требуется scope mail.',
+  mailMailboxSendersSchema.shape, wrap(mailMailboxSenders));
+
+server.tool('b24_mail_message_send',
+  'Отправляет новое письмо через REST v3 mail.message.send. Вызывать только по явному поручению пользователя отправить письмо. ' +
+  'Поддерживает текст, базовый HTML, CC и BCC; вложения не поддерживаются. Требуется scope mail и доступный отправитель. ' +
+  'После таймаута результат неизвестен: проверьте отправленные письма перед повтором. success не подтверждает доставку адресату.',
+  mailMessageSendSchema.shape, wrap(mailMessageSend));
 
 // ── База знаний (модуль landing, требуется scope `landing`) ───────────────────
 server.tool('b24_kb_list',

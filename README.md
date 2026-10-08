@@ -24,7 +24,7 @@ Built and maintained by **[Bit2Beat](https://bit2beat.com)** — Bitrix24 specia
 | **Groups** | List workgroups and projects. |
 | **Business Processes** | List active workflows and start new ones. |
 | **Telephony** | Query the call history log. |
-| **Mail** | List mailboxes, list and read email messages, and follow email threads (REST v3 — requires the `mail` scope). |
+| **Mail** | List mailboxes and senders, read messages and threads, and send email with CC/BCC (REST v3 — requires the `mail` scope). |
 | **Knowledge Base** | Browse knowledge bases and their articles, read article content, create and publish articles, and edit their blocks, cards, and images (requires the `landing` scope). |
 | **Knowledge Base 2.0** | Create knowledge bases, browse their document tree, read and write articles as Markdown, search across documents, and attach files (REST v3 — requires the `note` scope). |
 | **Product Catalog** | List, get, create, and update products and sections. |
@@ -237,7 +237,7 @@ Use this when you want Claude to operate as a full Bitrix24 assistant — readin
 | `bizproc` | Business processes and automations |
 | `catalog` | Product catalog |
 | `telephony` | Call history |
-| `mail` | Read mailboxes and email messages (REST v3) |
+| `mail` | Read mailboxes and messages, list senders and send email (REST v3) |
 | `note` | Knowledge Base 2.0: bases, documents, files (REST v3) |
 
 > Claude will gracefully report when a requested action requires a scope that is not enabled on the webhook, so you can always start with fewer scopes and add more later.
@@ -247,7 +247,7 @@ Use this when you want Claude to operate as a full Bitrix24 assistant — readin
 ## Available Tools
 
 <details>
-<summary>Click to expand full tool list (77 tools)</summary>
+<summary>Click to expand full tool list</summary>
 
 ### Connection
 - `b24_test_connection` — Verify the webhook and confirm portal info and user permissions.
@@ -325,6 +325,29 @@ Use this when you want Claude to operate as a full Bitrix24 assistant — readin
 - `b24_mail_message_list` — List a mailbox's messages, filtered by text, date range, read/unread, attachments, or folder.
 - `b24_mail_message_get` — Get a full message by ID, including its body.
 - `b24_mail_message_thread` — Get the email thread (conversation) for a given message ID.
+- `b24_mail_mailbox_senders` — List available sender addresses; optional `page`, `limit` (1–100, default 25) and `offset`.
+- `b24_mail_message_send` — Send a new email from an available `from` address to a nonempty `to` array, with `subject`, `body` (plain text or basic HTML), optional `cc` and `bcc` arrays. Attachments are not supported by this tool.
+
+Send only when the user explicitly requests sending. Choose `from` using
+`b24_mail_mailbox_senders`. The tool returns the API's `success` and `to`; a successful
+API response does not prove recipient delivery. Writes are not automatically retried
+after a timeout, rate limit or transport error. After an ambiguous failure, inspect
+Sent mail before retrying. Existing OAuth token refresh remains enabled for explicit
+authentication failures.
+
+Example arguments for `b24_mail_message_send` (sends a real email when invoked):
+
+```json
+{
+  "from": "sender@example.com",
+  "to": ["recipient@example.com"],
+  "subject": "Documents",
+  "body": "Hello! Here is the requested information."
+}
+```
+
+API references: [mail.message.send](https://apidocs.bitrix24.ru/api-reference/mail/message/mail-message-send.html),
+[mail.mailbox.senders](https://apidocs.bitrix24.ru/api-reference/mail/mailbox/mail-mailbox-senders.html).
 
 ### Knowledge Base
 > A knowledge base is a `landing` site of type `KNOWLEDGE`, its articles are pages, and article content is made of layout blocks. Requires the **`landing`** scope on the webhook and a commercial plan. Every call sends `scope: "KNOWLEDGE"` for you — without it Bitrix24 silently returns other sites or `LANDING_NOT_EXIST`. Block edits land in the page **draft**: publish the page to make them visible.
